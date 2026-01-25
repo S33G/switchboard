@@ -1,0 +1,53 @@
+FROM golang:1.25.4-alpine AS builder
+
+WORKDIR /src/backend
+
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+
+COPY backend/ ./
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/switchboard .
+
+
+FROM node:22-alpine AS ui-builder
+
+WORKDIR /src/ui
+
+RUN corepack enable
+
+COPY ui/package.json ui/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY ui/ ./
+RUN pnpm build
+
+
+FROM nginx:1.27-alpine
+
+RUN apk add --no-cache \
+      bash \
+      ca-certificates \
+      dumb-init \
+      docker-cli \
+      openssh-client \
+      tzdata
+
+WORKDIR /app
+
+COPY --from=builder /out/switchboard /usr/local/bin/switchboard
+COPY --from=ui-builder /src/ui/out /app/ui
+
+RUN rm -f /etc/nginx/conf.d/default.conf
+COPY deploy/nginx/00-switchboard.conf /etc/nginx/conf.d/00-switchboard.conf
+
+COPY deploy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENV API_PORT=8069
+ENV NGINX_ENABLED=1
+
+EXPOSE 80 443 8069
+
+ENTRYPOINT ["dumb-init", "--", "/entrypoint.sh"]

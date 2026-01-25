@@ -1,0 +1,130 @@
+basePath: /
+definitions:
+  container.PortSummary:
+    properties:
+      IP:
+        allOf:
+        - $ref: '#/definitions/netip.Addr'
+        description: Host IP address that the container's port is mapped to
+      PrivatePort:
+        description: |-
+          Port on the container
+          Required: true
+        type: integer
+      PublicPort:
+        description: Port exposed on the host
+        type: integer
+      Type:
+        description: |-
+          type
+          Required: true
+          Enum: ["tcp","udp","sctp"]
+        type: string
+    type: object
+  main.Config:
+    properties:
+      defaults:
+        $ref: '#/definitions/main.Defaults'
+      hosts:
+        items:
+          $ref: '#/definitions/main.Host'
+        type: array
+      proxy_mappings:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
+  main.Container:
+    properties:
+      host:
+        type: string
+      id:
+        type: string
+      image:
+        type: string
+      labels:
+        additionalProperties:
+          type: string
+        type: object
+      name:
+        type: string
+      ports:
+        items:
+          $ref: '#/definitions/container.PortSummary'
+        type: array
+      state:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  main.Defaults:
+    properties:
+      base_domain:
+        type: string
+      scheme:
+        type: string
+    type: object
+  main.Host:
+    properties:
+      endpoint:
+        type: string
+      name:
+        type: string
+      tls:
+        $ref: '#/definitions/main.TLSConfig'
+    type: object
+  main.TLSConfig:
+    properties:
+      ca:
+        type: string
+      cert:
+        type: string
+      key:
+        type: string
+    type: object
+  netip.Addr:
+    type: object
+host: localhost:8069
+info:
+  contact: {}
+  description: Multi-host Docker monitoring API for container status and proxy mappings.
+  title: Switchboard Backend API
+  version: 0.1.0
+paths:
+  /api/config:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.Config'
+      summary: Get configuration
+  /api/containers:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.Container'
+            type: array
+      summary: List containers
+  /healthz:
+    get:
+      responses:
+        "200":
+          description: OK
+      summary: Health check
+  /ws:
+    get:
+      responses: {}
+      summary: WebSocket stream
+schemes:
+- http
+swagger: "2.0"

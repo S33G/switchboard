@@ -1,0 +1,23 @@
+# Example Switchboard config for central nginx routing.
+#
+# - hosts[].endpoint is how Switchboard talks to each Docker daemon.
+# - host_addresses maps Docker host name -> network address reachable from nginx.
+#
+# With nginx enabled, running containers get routed at:
+#   <container-name>.<host-name>.<defaults.base_domain>
+
+hosts:
+  - name: c3po
+    endpoint: unix:///var/run/docker.sock
+  - name: deathstar
+    endpoint: context://deathstar
+
+host_addresses:
+  c3po: c3po.home
+  deathstar: deathstar.home
+
+proxy_mappings: {}
+
+defaults:
+  base_domain: containers.home
+  scheme: http

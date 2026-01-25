@@ -1,0 +1,31 @@
+{
+  "name": "switchboard-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "next": "16.1.4",
+    "next-usequerystate": "^1.20.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "tailwindcss": "^4.1.18",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "16.0.0",
+    "postcss": "^8.4.38",
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@10.28.1+sha512.7d7dbbca9e99447b7c3bf7a73286afaaf6be99251eb9498baefa7d406892f67b879adb3a1d7e687fc4ccc1a388c7175fbaae567a26ab44d1067b54fcb0d6a316"
+}

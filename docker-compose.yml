@@ -1,0 +1,28 @@
+services:
+  switchboard:
+    build: .
+    container_name: switchboard
+    ports:
+      - "8051:80"
+      - "8052:8069" # optional (direct API access)
+    environment:
+      # Switchboard config
+      CONFIG_PATH: /config/config.yaml
+
+      # Enable nginx config generation + reloads
+      NGINX_ENABLED: "1"
+
+      # Optional knobs
+      # NGINX_RELOAD_DEBOUNCE: 1500ms
+      # NGINX_GENERATED_CONF: /etc/nginx/conf.d/switchboard.generated.conf
+    volumes:
+      # Example config (edit to match your homelab)
+      - ./examples/config.yaml:/config/config.yaml:ro
+
+      # If you use local docker socket for any host endpoint
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # If you use `context://...` endpoints
+      - ~/.docker:/root/.docker:ro
+      # If those contexts use SSH
+      - ~/.ssh:/root/.ssh:ro

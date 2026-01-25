@@ -1,0 +1,8 @@
+.git
+
+# Just in case
+**/node_modules
+**/.next
+
+# UI output
+ui/out

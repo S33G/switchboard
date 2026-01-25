@@ -1,114 +1,74 @@
 # Project Plan: Multi-Host Docker Monitoring & Auto-Proxy System
 
+## Executive Summary
+Build a Go service that monitors Docker containers across multiple hosts, generates nginx reverse-proxy config dynamically, and broadcasts live status updates to a React dashboard over WebSockets. The system is read-only against Docker APIs and focuses on near real-time visibility and safe, automated proxy updates.
+
 ## Goals
-- Monitor Docker containers across multiple hosts in near real-time.
-- Auto-generate and reload nginx reverse-proxy configs based on container discovery.
-- Provide a live React dashboard for container status and proxy mappings.
-- Keep the system read-only against Docker APIs with minimal operational risk.
+- Monitor containers across multiple Docker hosts in near real-time.
+- Generate and reload nginx reverse-proxy configs based on discovered containers.
+- Provide a live dashboard for container status and proxy mappings.
+- Keep Docker access read-only where possible and minimize operational risk.
 
 ## Non-Goals
-- Container orchestration (no scheduling, scaling, or deployment).
-- Persistent historical metrics storage (initial release is in-memory only).
-- User-facing auth/roles beyond read-only access (optional later phase).
+- Orchestration (scheduling, scaling, or deployment management).
+- Persistent historical metrics (MVP uses in-memory state only).
+- Multi-tenant auth/roles beyond simple read-only access.
+
+## Success Criteria
+- Container state updates appear in the UI within 1–3 seconds of Docker events.
+- nginx config reloads occur within 5 seconds of relevant container changes.
+- System can track at least 5 hosts and 200 containers without errors.
+- WebSocket fan-out handles 100 concurrent dashboard clients.
 
 ## Assumptions
-- Docker daemons are reachable via Unix sockets or TCP+TLS.
-- nginx runs in the same container or a reachable sidecar with a shared config volume.
-- Single-tenant deployment; multi-tenant access control is out of scope initially.
+- Docker daemons are reachable via Unix socket or TCP+TLS.
+- nginx runs in the same pod/host or sidecar with shared config volume.
+- Single-tenant deployment; minimal access controls in MVP.
 
-## Architecture Summary
+## Architecture Overview
+
+### Components
 **Backend (Go)**
-- Docker Monitor Service: Connects to multiple Docker hosts, watches events, and maintains in-memory container state.
-- Nginx Config Generator: Renders upstream/server blocks from container state and config mappings.
-- WebSocket + REST API: Serves initial state and pushes live updates to clients.
+- Docker Monitor: connects to multiple Docker hosts and watches events.
+- State Store: in-memory container state by host, exposes snapshot + delta.
+- Nginx Generator: renders templates and triggers reloads.
+- API + WebSocket Server: initial state via REST, live updates via WS.
 
 **Frontend (React/TypeScript)**
-- Live dashboard with container status, proxy mappings, filters, and search.
-- WebSocket-driven UI updates without page refresh.
+- Dashboard with container list, status badges, and proxy mappings.
+- WebSocket-driven updates without page reload.
 
-## Milestones & Phases
+### Data Flow
+1. Docker host events → event listener per host.
+2. Events update state store → broadcast deltas.
+3. Nginx config generator renders → write + validate + reload.
+4. Clients load snapshot → subscribe to deltas via WebSocket.
 
-### Phase 0 — Project Setup & Baselines
-**Deliverables**
-- Repository layout and module boundaries defined.
-- Baseline configs for linting/formatting/testing (Go + TS).
-- Dev container or local run instructions.
-
-### Phase 1 — Core Docker Monitoring
-**Deliverables**
-- Multi-host Docker client layer with connection pooling.
-- Container state model and in-memory store.
-- Event listener (start/stop/restart) for each host.
-- REST endpoint: `GET /api/containers` returns current state.
-
-### Phase 2 — Nginx Auto-Configuration
-**Deliverables**
-- Config parser for URL→container mappings + defaults.
-- Nginx template rendering (upstream + server blocks).
-- File writer to shared config volume.
-- Nginx reload strategy (signal or exec) with retries.
-
-### Phase 3 — WebSocket + API Layer
-**Deliverables**
-- WebSocket hub with broadcast of container changes.
-- REST endpoints for config read/update (read-only in MVP).
-- CORS + rate-limiting defaults.
-
-### Phase 4 — React Dashboard
-**Deliverables**
-- Container list/grid with status indicators.
-- Proxy mapping view per container.
-- WebSocket hook integration (`react-use-websocket`).
-- Responsive layout + search/filter UI.
-
-### Phase 5 — Integration, Testing, and Hardening
-**Deliverables**
-- Multi-stage Dockerfile building Go + React.
-- End-to-end integration test with multiple docker hosts.
-- Load test for WebSocket fan-out.
-- Deployment documentation and configuration reference.
-
-## Workstreams
-
-### Backend (Go)
-1. **Docker Client Manager**
-   - Parse `DOCKER_HOSTS` or config file into host entries.
-   - Initialize per-host Docker clients.
-   - Reconnect on transient failures.
-
-2. **State Store**
-   - Normalize container info: ID, name, image, state, host, ports.
-   - Merge host-level data into global view.
-   - Provide snapshot + delta APIs.
-
-3. **Events Pipeline**
-   - Subscribe to Docker Events API per host.
-   - Update store and broadcast deltas.
-   - Backoff/retry on stream errors.
-
-4. **API Layer**
-   - `GET /api/containers` (snapshot)
-   - `GET /api/config` (read-only)
-   - `POST /api/config` (optional later)
-
-### Nginx Generator
-1. Parse mappings from config file.
-2. Generate default subdomain mapping `<container>.<base_domain>`.
-3. Render nginx config template.
-4. Atomically write config and reload nginx.
-
-### Frontend (React)
-1. WebSocket connection + reconnect handling.
-2. Data model types + query layer (React Query + axios).
-3. Container list components + status badges.
-4. Filters (host, status, name, image).
-
-### DevOps & Deployment
-1. Docker-compose for local dev with fake multiple hosts.
-2. TLS handling for remote Docker endpoints.
-3. Volume mounts for docker sockets and nginx configs.
+### Deployment Topology
+- Monitoring service container with optional mounts:
+  - Docker sockets (local/remote)
+  - nginx config volume (shared)
+- nginx container receives config updates + reload signal.
+- React build served via nginx alongside reverse proxy.
 
 ## Interfaces & Data Model
+
+### REST Endpoints (v1)
+- `GET /api/containers`: snapshot of container states.
+- `GET /api/config`: current mapping config.
+- `POST /api/config`: optional (future) mapping updates.
+
+### WebSocket Events (v1)
+```json
+{
+  "type": "container_updated",
+  "payload": {
+    "id": "...",
+    "state": "restarting",
+    "host": "host2"
+  }
+}
+```
 
 ### Container Model (draft)
 ```json
@@ -126,21 +86,7 @@
 }
 ```
 
-### WebSocket Events (draft)
-```json
-{
-  "type": "container_updated",
-  "payload": {
-    "id": "...",
-    "state": "restarting",
-    "host": "host2"
-  }
-}
-```
-
-## Configuration
-
-### YAML Config (draft)
+### Config Schema (draft)
 ```yaml
 hosts:
   - name: host1
@@ -161,39 +107,113 @@ defaults:
   scheme: https
 ```
 
-## Nginx Reload Strategy
-- **Preferred**: `docker exec nginx nginx -s reload` for isolated reload behavior.
-- **Fallback**: SIGHUP to nginx PID if exec is unavailable.
+## Milestones & Phases
+
+### Phase 0 — Project Setup
+**Deliverables**
+- Repository layout and module boundaries defined.
+- Baseline lint/format/test config (Go + TS).
+- Local dev instructions.
+
+### Phase 1 — Core Docker Monitoring
+**Deliverables**
+- Multi-host Docker client layer.
+- In-memory state store and snapshot endpoint.
+- Event listeners for start/stop/restart.
+
+**Exit Criteria**
+- Events update state within 3 seconds.
+- Snapshot endpoint responds < 200ms for 200 containers.
+
+### Phase 2 — Nginx Auto-Configuration
+**Deliverables**
+- Config parser for URL → container mappings.
+- Nginx template rendering and validation (`nginx -t`).
+- Reload strategy with retry/backoff.
+
+**Exit Criteria**
+- Config reloads succeed after container changes.
+- Invalid templates do not replace current config.
+
+### Phase 3 — API + WebSocket Layer
+**Deliverables**
+- WebSocket hub with broadcast of deltas.
+- REST endpoints for config + state.
+- CORS defaults + basic rate limiting.
+
+**Exit Criteria**
+- 100 concurrent clients receive updates without disconnects.
+
+### Phase 4 — React Dashboard
+**Deliverables**
+- Container list/grid with status badges.
+- Proxy mapping view per container.
+- Filtering/search and host grouping.
+
+**Exit Criteria**
+- UI updates within 1–3 seconds of events.
+
+### Phase 5 — Integration & Hardening
+**Deliverables**
+- Multi-stage Dockerfile for Go + React.
+- Integration tests for multi-host setup.
+- Load tests for WebSocket fan-out.
+- Deployment docs and configuration reference.
+
+## Workstreams
+
+### Backend (Go)
+- Docker client manager with host pooling and retries.
+- Event ingestion pipeline with reconnect/resync.
+- State store with snapshot + delta APIs.
+- WebSocket hub for broadcasts.
+
+### Nginx Generator
+- Template-based rendering with upstream/server blocks.
+- Default subdomain fallback for unmapped containers.
+- Atomic file writes + validation before reload.
+
+### Frontend (React)
+- `react-use-websocket` connection + reconnection logic.
+- React Query snapshot + in-memory live updates.
+- Filtering/search UI.
+
+### DevOps & Deployment
+- Docker-compose for local dev (multi-host simulation).
+- TLS configuration guidance for remote daemons.
+- Volume mount strategy for sockets and nginx configs.
+
+## Testing & Validation
+- Unit tests: config parsing, template rendering, mapping rules.
+- Integration tests: multi-host events → state → nginx reload.
+- Load tests: WebSocket fan-out and reconnect storms.
 
 ## Security Considerations
 - Read-only Docker socket access where possible.
 - TLS for remote Docker daemon connections.
-- CORS restrictions for API + WebSocket.
-- Rate limiting for WebSocket connections.
+- CORS restrictions for API and WS.
+- Rate limiting on WS connections.
 
 ## Observability
-- Structured logs for event stream, config renders, and reloads.
-- Basic health endpoints: `/healthz`, `/readyz`.
-- Metrics (optional): event lag, connected websocket clients.
-
-## Testing Strategy
-- Unit tests for config parsing and template rendering.
-- Integration tests with multiple Docker daemons.
-- WebSocket load tests and reconnect scenarios.
+- Structured logs for event stream, render, reload.
+- Health endpoints: `/healthz`, `/readyz`.
+- Optional metrics: event lag, connected WS clients.
 
 ## Risks & Mitigations
-- **Docker event stream reliability**: Reconnect with backoff and resync on reconnect.
-- **Config reload errors**: Render to temp file and validate with `nginx -t` before reload.
-- **Remote TLS setup complexity**: Provide docs and sample configs.
+- **Event stream drops**: reconnect with backoff + resync on reconnect.
+- **Bad config reload**: validate with `nginx -t` before swap.
+- **TLS setup complexity**: provide examples and validation steps.
+- **Host scale**: limit per-host connections and batch refresh.
 
 ## Open Questions
-- Should proxy mappings be label-based, config-based, or both?
-- How to handle multiple containers matching the same hostname?
-- Do we need persistent state or is in-memory sufficient for v1?
+- Should proxy mappings use labels, config file, or both?
+- How to handle multiple containers matching a hostname?
+- Is in-memory state sufficient for v1, or do we need optional Redis?
 
 ## References
 - Docker Go client: https://pkg.go.dev/github.com/docker/docker/client
+- Docker Engine API: https://docs.docker.com/engine/api/
 - nginx-proxy: https://github.com/nginx-proxy/nginx-proxy
 - docker-gen pattern: http://romkevandermeulen.nl/2015/02/19/docker-gen-automatic-nginx-config-with-a-human-touch.html
-- gorilla/websocket: https://www.jonathan-petitcolas.com/2015/01/27/playing-with-websockets-in-go.html
+- gorilla/websocket: https://github.com/gorilla/websocket
 - react-use-websocket: https://github.com/robtaussig/react-use-websocket
