@@ -3,19 +3,39 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
+	"sync"
 )
 
 type API struct {
-	store  *StateStore
-	hub    *Hub
-	config Config
+	store         *StateStore
+	hub           *Hub
+	config        Config
+	configMutex   sync.RWMutex
+	configChanged chan struct{}
 }
 
 func NewAPI(store *StateStore, hub *Hub, config Config) *API {
-	api := &API{store: store, hub: hub, config: config}
+	api := &API{
+		store:         store,
+		hub:           hub,
+		config:        config,
+		configChanged: make(chan struct{}, 1),
+	}
 	api.computeProxyRoutes()
 	return api
+}
+
+func (api *API) ConfigChanged() <-chan struct{} {
+	return api.configChanged
+}
+
+func (api *API) notifyConfigChanged() {
+	select {
+	case api.configChanged <- struct{}{}:
+	default:
+	}
 }
 
 func (api *API) addProxyRoute(routes map[string]map[string][]string, key string, url string) {
@@ -112,13 +132,57 @@ func (api *API) handleContainers(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(snapshot)
 }
 
-// @Summary Get configuration
+// @Summary Get or update configuration
 // @Produce json
+// @Accept json
 // @Success 200 {object} Config
 // @Router /api/config [get]
-func (api *API) handleConfig(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(api.config)
+// @Router /api/config [put]
+func (api *API) handleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		api.configMutex.RLock()
+		config := api.config
+		api.configMutex.RUnlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(config)
+
+	case "PUT":
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Authorization required", http.StatusUnauthorized)
+			return
+		}
+
+		apiKey := os.Getenv("API_KEY")
+		if apiKey != "" && authHeader != "Bearer "+apiKey {
+			http.Error(w, "Invalid API key", http.StatusUnauthorized)
+			return
+		}
+
+		var newConfig Config
+		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if len(newConfig.Hosts) == 0 {
+			http.Error(w, "At least one host must be configured", http.StatusBadRequest)
+			return
+		}
+
+		api.configMutex.Lock()
+		api.config = newConfig
+		api.computeProxyRoutes()
+		api.configMutex.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(newConfig)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // @Summary WebSocket stream

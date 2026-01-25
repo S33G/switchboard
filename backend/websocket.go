@@ -93,3 +93,21 @@ func (h *Hub) BroadcastDiff(diff ContainerDiff) {
 	default:
 	}
 }
+
+func (h *Hub) BroadcastConfigUpdate(config Config, hostsChanged bool) {
+	payload := map[string]any{
+		"type": "config_updated",
+		"payload": map[string]any{
+			"config":        config,
+			"hosts_changed": hostsChanged,
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	select {
+	case h.broadcast <- data:
+	default:
+	}
+}
