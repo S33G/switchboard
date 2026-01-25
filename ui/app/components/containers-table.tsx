@@ -1,4 +1,5 @@
 import { buildWebUiLinks, formatPorts } from "../lib/helpers";
+import { StatusPill } from "./status-pill";
 import type { Config, Container } from "../lib/types";
 
 interface ContainersTableProps {
@@ -48,9 +49,7 @@ export function ContainersTable({ containers, config }: ContainersTableProps) {
                 </td>
                 <td className="px-4 py-3 text-slate-300">{container.image}</td>
                 <td className="px-4 py-3">
-                  <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-200">
-                    {container.status}
-                  </span>
+                  <StatusPill status={container.status} />
                 </td>
                 <td className="px-4 py-3 text-slate-300">
                   {formatPorts(container)}

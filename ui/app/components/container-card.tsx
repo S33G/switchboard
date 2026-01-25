@@ -1,5 +1,6 @@
 import type { Config, Container } from "../lib/types";
 import { buildWebUiLinks } from "../lib/helpers";
+import { StatusPill } from "./status-pill";
 
 interface ContainerCardProps {
   container: Container;
@@ -20,9 +21,7 @@ export function ContainerCard({ container, config }: ContainerCardProps) {
             {container.state}
           </p>
         </div>
-        <span className="rounded-full bg-slate-800 px-3 py-1 text-xs font-semibold text-slate-200">
-          {container.status}
-        </span>
+        <StatusPill status={container.status} />
       </header>
 
       <dl className="space-y-4 text-sm text-slate-300">
