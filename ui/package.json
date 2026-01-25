@@ -16,6 +16,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "tailwindcss": "^4.1.18",
+    "@leeoniya/ufuzzy": "^1.0.19",
     "zod": "^4.3.6"
   },
   "devDependencies": {

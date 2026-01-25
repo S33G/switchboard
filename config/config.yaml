@@ -19,13 +19,14 @@ host_addresses:
   deathstar: deathstar.home
 
 proxy_mappings:
-  grafana.containers.home: deathstar/grafana:5006
-  deemix.containers.home: c3po/deemix:6595
-  metube.containers.home: c3po/metube:8081
   netboot.containers.home: c3po/netboot:3000
   pinchflat.containers.home: c3po/pinchflat:8945
   plex.containers.home: c3po/plex:6900
-  n8n.containers.home: deathstar/n8n:5678
+  torrents.containers.home: c3po/qbittorrent:8050
+  netbootxyz.containers.home: c3po/netbootxyz:3000
+  prometheus.containers.home: c3po/prometheus:9090
+  grafana.containers.home: c3po/grafana:3060
+
 
 defaults:
   base_domain: containers.home
