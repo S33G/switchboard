@@ -16,7 +16,14 @@ host_addresses:
   c3po: c3po.home
   deathstar: deathstar.home
 
-proxy_mappings: {}
+proxy_mappings:
+  grafana.containers.home: deathstar/grafana:5006
+  deemix.containers.home: c3po/deemix:6595
+  metube.containers.home: c3po/metube:8081
+  netboot.containers.home: c3po/netboot:3000
+  pinchflat.containers.home: c3po/pinchflat:8945
+  plex.containers.home: c3po/plex:6900
+  n8n.containers.home: deathstar/n8n:5678
 
 defaults:
   base_domain: containers.home

@@ -1,7 +1,9 @@
 hosts:
 - name: host
   endpoint: unix:///var/run/docker.sock
+
 proxy_mappings: {}
+
 defaults:
   base_domain: local
   scheme: http

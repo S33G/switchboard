@@ -17,7 +17,7 @@ Switchboard automatically discovers running containers across your Docker infras
 - 🔌 **Multi-host support**: Connect via Unix socket, TCP, TLS, SSH, or Docker contexts
 - 📊 **Web UI**: Beautiful Next.js dashboard to monitor all containers
 - 🔄 **Real-time updates**: WebSocket-powered live container state changes
-- 🎯 **Custom mappings**: Override default routing with custom domain mappings
+- 🎯 **Custom mappings**: Override default routing with custom domain mappings and port specifications
 - 🐳 **Container-native**: Ships as a single Docker image with everything included
 
 ---
@@ -57,9 +57,6 @@ EOF
 # Start Switchboard
 docker compose up -d
 ```
-
-**Access the UI**: http://localhost  
-**Access the API**: http://localhost:8069
 
 ---
 
@@ -114,16 +111,16 @@ services:
     volumes:
       # Config file
       - ./config.yaml:/config/config.yaml:ro
-      
+
       # Local Docker socket
       - /var/run/docker.sock:/var/run/docker.sock
-      
+
       # Docker contexts (for remote hosts)
       - ~/.docker:/root/.docker:ro
-      
+
       # SSH keys (if using SSH contexts)
       - ~/.ssh:/root/.ssh:ro
-      
+
       # SSL certificates (optional)
       # - ./ssl:/etc/nginx/ssl:ro
 ```
@@ -170,11 +167,11 @@ hosts:
   # Local Docker host
   - name: homelab
     endpoint: unix:///var/run/docker.sock
-  
+
   # Remote host via SSH
   - name: remote-server
     endpoint: ssh://user@192.168.1.100
-  
+
   # Docker context
   - name: cloud
     endpoint: context://aws-prod
@@ -185,10 +182,11 @@ host_addresses:
   remote-server: 192.168.1.100
   cloud: cloud.example.com
 
-# Custom domain mappings
+# Custom domain mappings with optional port specification
 proxy_mappings:
-  api.example.com: homelab/api-container
-  app.example.com: remote-server/web-app
+  api.example.com: homelab/api-container:8080
+  app.example.com: remote-server/web-app:3000
+  admin.example.com: cloud/admin-panel
 
 defaults:
   base_domain: containers.home
@@ -203,9 +201,9 @@ defaults:
 | `hosts[].name` | string | Unique name for the Docker host |
 | `hosts[].endpoint` | string | Docker daemon endpoint (unix://, tcp://, ssh://, context://) |
 | `host_addresses` | map | Maps host names to network addresses reachable from nginx |
-| `proxy_mappings` | map | Custom domain → container mappings |
+| `proxy_mappings` | map | Custom domain → container mappings with optional port (`host/container[:port]`) |
 | `defaults.base_domain` | string | Base domain for auto-generated container URLs |
-| `defaults.scheme` | string | Default scheme for generated URLs (http or https) |
+| `defaults.scheme` | string | Default scheme for generated URLs (http or https). Also sets default port: 80 for http, 443 for https |
 
 ---
 
@@ -232,13 +230,20 @@ Override the default pattern with `proxy_mappings`:
 
 ```yaml
 proxy_mappings:
-  api.example.com: homelab/backend-api
-  app.example.com: cloud/frontend
+  api.example.com: homelab/backend-api:8080
+  app.example.com: cloud/frontend:3000
+  web.example.com: homelab/web-server
 ```
 
 Now:
-- `api.example.com` → routes to `backend-api` on `homelab`
-- `app.example.com` → routes to `frontend` on `cloud`
+- `api.example.com` → routes to `backend-api` on `homelab` at port `8080`
+- `app.example.com` → routes to `frontend` on `cloud` at port `3000`
+- `web.example.com` → routes to `web-server` on `homelab` at default port (80 or 443 based on scheme)
+
+**Port Specification:**
+- **With port**: `host/container:8080` - explicitly routes to port 8080
+- **Without port**: `host/container` - uses default port based on scheme (80 for http, 443 for https)
+- **Format**: `<host>/<container>[:<port>]`
 
 ---
 
@@ -326,8 +331,9 @@ host_addresses:
   nas: 192.168.1.200
 
 proxy_mappings:
-  home.example.com: pi1/homepage
-  plex.example.com: nas/plex
+  home.example.com: pi1/homepage:8080
+  plex.example.com: nas/plex:32400
+  grafana.example.com: pi2/grafana:3000
 
 defaults:
   base_domain: lab.home
@@ -335,10 +341,10 @@ defaults:
 ```
 
 **Access containers:**
-- `home.example.com` → Homepage on pi1
-- `plex.example.com` → Plex on NAS
-- `portainer.pi1.lab.home` → Portainer on pi1
-- `grafana.pi2.lab.home` → Grafana on pi2
+- `home.example.com` → Homepage on pi1 at port 8080
+- `plex.example.com` → Plex on NAS at port 32400
+- `grafana.example.com` → Grafana on pi2 at port 3000
+- `portainer.pi1.lab.home` → Portainer on pi1 (auto-detected port)
 
 ### Development Environment
 
@@ -375,9 +381,9 @@ hosts:
     endpoint: context://azure-prod
 
 proxy_mappings:
-  api.example.com: aws/api-service
-  web.example.com: gcp/frontend
-  admin.example.com: azure/admin-panel
+  api.example.com: aws/api-service:8080
+  web.example.com: gcp/frontend:3000
+  admin.example.com: azure/admin-panel:4000
 
 defaults:
   base_domain: prod.example.com
@@ -616,6 +622,44 @@ export DOCKER_HOSTS="unix:///var/run/docker.sock"
 docker run --rm ghcr.io/s33g/switchboard:latest \
   switchboard -init-config - > config.yaml
 ```
+
+### Custom Port Mapping Examples
+
+**Scenario 1: Services on non-standard ports**
+
+```yaml
+proxy_mappings:
+  jenkins.example.com: homelab/jenkins:8080
+  grafana.example.com: homelab/grafana:3000
+  portainer.example.com: homelab/portainer:9000
+```
+
+**Scenario 2: Mix of explicit and default ports**
+
+```yaml
+proxy_mappings:
+  api.example.com: homelab/api:8080          # Explicit port
+  web.example.com: homelab/nginx             # Default port (80 for http, 443 for https)
+  ws.example.com: homelab/websocket:3001     # Explicit port
+
+defaults:
+  scheme: http  # Sets default port to 80 for mappings without explicit port
+```
+
+**Scenario 3: Multiple services, same host, different ports**
+
+```yaml
+host_addresses:
+  homelab: 192.168.1.50
+
+proxy_mappings:
+  api.example.com: homelab/backend:8080
+  admin.example.com: homelab/admin:8081
+  metrics.example.com: homelab/prometheus:9090
+  dashboard.example.com: homelab/grafana:3000
+```
+
+Each domain routes to the same physical host (192.168.1.50) but different ports.
 
 ### Health Checks
 
