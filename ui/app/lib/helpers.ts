@@ -42,12 +42,13 @@ export function buildWebUiLinks(container: Container, config: Config): string[] 
   
   let links: string[] = [];
   
-  if (config.proxy_routes?.[container.name]?.domains) {
-    links = [...config.proxy_routes[container.name].domains];
+  const containerKey = `${container.host}/${container.name}`;
+  if (config.proxy_routes?.[containerKey]?.domains) {
+    links = [...config.proxy_routes[containerKey].domains];
   }
 
   const fallbackLink = baseDomain
-    ? `${scheme}://${container.name}.${baseDomain}`
+    ? `${scheme}://${container.name}.${container.host}.${baseDomain}`
     : "";
 
   return Array.from(new Set([...links, fallbackLink].filter(Boolean)));

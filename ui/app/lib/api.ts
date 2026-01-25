@@ -33,6 +33,7 @@ const ConfigSchema = z.object({
     })
     .optional(),
   proxy_mappings: z.record(z.string(), z.string()).optional(),
+  proxy_routes: z.record(z.string(), z.record(z.string(), z.array(z.string()))).optional(),
 });
 
 async function fetchJson(path: string): Promise<unknown> {
@@ -68,5 +69,6 @@ export async function getConfig(): Promise<Config> {
   return {
     defaults: parsed.data.defaults ?? {},
     proxy_mappings: parsed.data.proxy_mappings ?? {},
+    proxy_routes: parsed.data.proxy_routes ?? {},
   };
 }

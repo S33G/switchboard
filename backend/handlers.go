@@ -17,20 +17,29 @@ func NewAPI(store *StateStore, hub *Hub, config Config) *API {
 	return api
 }
 
+func (api *API) addProxyRoute(routes map[string]map[string][]string, key string, url string) {
+	if routes[key] == nil {
+		routes[key] = make(map[string][]string)
+	}
+	routes[key]["domains"] = append(routes[key]["domains"], url)
+}
+
 func (api *API) computeProxyRoutes() {
 	proxyRoutes := make(map[string]map[string][]string)
 
-	for domain, containerName := range api.config.ProxyMappings {
+	for domain, targetStr := range api.config.ProxyMappings {
 		scheme := api.config.Defaults.Scheme
 		if scheme == "" {
 			scheme = "http"
 		}
 		url := scheme + "://" + domain
 
-		if proxyRoutes[containerName] == nil {
-			proxyRoutes[containerName] = make(map[string][]string)
+		api.addProxyRoute(proxyRoutes, targetStr, url)
+
+		if target, ok := api.config.ParsedMappings[domain]; ok {
+			containerKey := target.Host + "/" + target.Container
+			api.addProxyRoute(proxyRoutes, containerKey, url)
 		}
-		proxyRoutes[containerName]["domains"] = append(proxyRoutes[containerName]["domains"], url)
 	}
 
 	api.config.ProxyRoutes = proxyRoutes
