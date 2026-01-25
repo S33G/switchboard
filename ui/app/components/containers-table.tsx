@@ -15,6 +15,14 @@ type SortKey = "host" | "container" | "image" | "status" | "ports" | "web";
 type SortDirection = "asc" | "desc";
 type SortValue = string | number | null;
 
+interface AnimatingIds {
+  added: Set<string>;
+  updated: Set<string>;
+  removed: Set<string>;
+}
+
+type RowAnimationState = "entering" | "updated" | "none";
+
 const SORT_COLUMNS: { key: SortKey; label: string }[] = [
   { key: "host", label: "Host" },
   { key: "container", label: "Container" },
@@ -55,7 +63,7 @@ function getPrimaryPort(container: Container): number | null {
   if (!sortedPorts.length) {
     return null;
   }
-  return sortedPorts[0].PublicPort ?? sortedPorts[0].PrivatePort ?? null;
+  return sortedPorts[0].public ?? sortedPorts[0].private ?? null;
 }
 
 function getSortValue(
@@ -108,14 +116,14 @@ function PortsList({ container, config }: { container: Container; config: Config
   return (
     <div className="flex flex-col gap-1 text-slate-300">
       {ports.map((port, index) => {
-        const privateLabel = `${port.PrivatePort}/${port.Type}`;
-        const href = port.PublicPort
-          ? buildPortLink(container.host, port.PublicPort, config)
+        const privateLabel = `${port.private}/${port.type}`;
+        const href = port.public
+          ? buildPortLink(container.host, port.public, config)
           : null;
 
         return (
-          <div key={`${port.PrivatePort}-${port.PublicPort ?? "internal"}-${index}`}>
-            {port.PublicPort ? (
+          <div key={`${port.private}-${port.public ?? "internal"}-${index}`}>
+            {port.public ? (
               <span className="inline-flex flex-wrap items-center gap-2">
                 {href ? (
                   <a
@@ -124,10 +132,10 @@ function PortsList({ container, config }: { container: Container; config: Config
                     rel="noreferrer"
                     className="font-semibold text-sky-300 transition hover:text-sky-200"
                   >
-                    {port.PublicPort}
+                    {port.public}
                   </a>
                 ) : (
-                  <span className="font-semibold text-slate-100">{port.PublicPort}</span>
+                  <span className="font-semibold text-slate-100">{port.public}</span>
                 )}
                 <span className="text-slate-500">-&gt;</span>
                 <span className="text-slate-400">{privateLabel}</span>
@@ -145,19 +153,31 @@ function PortsList({ container, config }: { container: Container; config: Config
 interface ContainersTableProps {
   containers: Container[];
   config: Config;
+  animatingIds?: AnimatingIds;
+  hasSearch?: boolean;
 }
 
-export function ContainersTable({ containers, config }: ContainersTableProps) {
+function getRowAnimationState(
+  containerId: string,
+  animatingIds?: AnimatingIds
+): RowAnimationState {
+  if (!animatingIds) return "none";
+  if (animatingIds.added.has(containerId)) return "entering";
+  if (animatingIds.updated.has(containerId)) return "updated";
+  return "none";
+}
+
+export function ContainersTable({
+  containers,
+  config,
+  animatingIds,
+  hasSearch = false,
+}: ContainersTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>("host");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
-  const runningContainers = useMemo(
-    () => containers.filter((container) => container.state === "running"),
-    [containers]
-  );
-
   const sortedContainers = useMemo(() => {
-    const items = runningContainers.map((container) => ({
+    const items = containers.map((container) => ({
       container,
       sortValue: getSortValue(container, sortKey, config),
       host: container.host,
@@ -177,12 +197,14 @@ export function ContainersTable({ containers, config }: ContainersTableProps) {
     });
 
     return items.map((item) => item.container);
-  }, [runningContainers, sortKey, sortDirection, config]);
+  }, [containers, sortKey, sortDirection, config]);
 
-  if (!runningContainers.length) {
+  if (!containers.length) {
     return (
       <div className="rounded-3xl border border-dashed border-slate-800 bg-slate-900/40 p-8 text-center text-slate-300">
-        No running containers detected yet.
+        {hasSearch
+          ? "No running containers match your search yet."
+          : "No running containers detected yet."}
       </div>
     );
   }
@@ -244,10 +266,17 @@ export function ContainersTable({ containers, config }: ContainersTableProps) {
             const links = buildWebUiLinks(container, config);
             const imageLinks = getImageLinks(container.image);
             const statusUp = isStatusUp(container.status);
+            const rowAnimation = getRowAnimationState(container.id, animatingIds);
+            const animationClass =
+              rowAnimation === "entering"
+                ? "animate-row-enter"
+                : rowAnimation === "updated"
+                  ? "animate-row-pulse"
+                  : "";
             return (
               <tr
                 key={container.id}
-                className={`align-top transition ${
+                className={`align-top transition ${animationClass} ${
                   statusUp
                     ? "hover:bg-slate-900/40"
                     : "bg-rose-500/5 hover:bg-rose-500/10"

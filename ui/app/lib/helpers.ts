@@ -1,16 +1,14 @@
 import type { Config, Container, ContainerPort, HostGroup } from "./types";
 
 export function groupRunningByHost(containers: Container[]): HostGroup[] {
-  const grouped = containers
-    .filter((container) => container.state === "running")
-    .reduce<Record<string, Container[]>>((acc, container) => {
-      const hostName = container.host || "unknown";
-      if (!acc[hostName]) {
-        acc[hostName] = [];
-      }
-      acc[hostName].push(container);
-      return acc;
-    }, {});
+  const grouped = containers.reduce<Record<string, Container[]>>((acc, container) => {
+    const hostName = container.host || "unknown";
+    if (!acc[hostName]) {
+      acc[hostName] = [];
+    }
+    acc[hostName].push(container);
+    return acc;
+  }, {});
 
   return Object.entries(grouped)
     .map(([host, hostContainers]) => ({
@@ -29,9 +27,9 @@ export function formatPorts(container: Container): string {
 
   return sortedPorts
     .map((port) => {
-      const privatePort = `${port.PrivatePort}/${port.Type}`;
-      if (port.PublicPort) {
-        return `${port.PublicPort} → ${privatePort}`;
+      const privatePort = `${port.private}/${port.type}`;
+      if (port.public) {
+        return `${port.public} → ${privatePort}`;
       }
       return privatePort;
     })
@@ -40,19 +38,19 @@ export function formatPorts(container: Container): string {
 
 export function sortPorts(ports: ContainerPort[]): ContainerPort[] {
   return [...ports].sort((a, b) => {
-    const aPublic = a.PublicPort ?? Number.POSITIVE_INFINITY;
-    const bPublic = b.PublicPort ?? Number.POSITIVE_INFINITY;
+    const aPublic = a.public ?? Number.POSITIVE_INFINITY;
+    const bPublic = b.public ?? Number.POSITIVE_INFINITY;
     if (aPublic !== bPublic) {
       return aPublic - bPublic;
     }
-    if (a.PrivatePort !== b.PrivatePort) {
-      return a.PrivatePort - b.PrivatePort;
+    if (a.private !== b.private) {
+      return a.private - b.private;
     }
-    const typeCompare = a.Type.localeCompare(b.Type);
+    const typeCompare = a.type.localeCompare(b.type);
     if (typeCompare) {
       return typeCompare;
     }
-    return (a.IP ?? "").localeCompare(b.IP ?? "");
+    return 0;
   });
 }
 
@@ -145,7 +143,7 @@ export function buildWebUiLinks(container: Container, config: Config): string[] 
   }
 
   const publishedPorts = container.ports.filter(
-    (port) => (port.PublicPort ?? 0) > 0
+    (port) => (port.public ?? 0) > 0
   );
   const canGuessPort = publishedPorts.length === 1;
   const containerName = container.name?.trim();

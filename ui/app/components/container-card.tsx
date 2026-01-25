@@ -7,18 +7,34 @@ import {
 } from "../lib/helpers";
 import { StatusPill } from "./status-pill";
 
+export type AnimationState = "entering" | "updated" | "none";
+
 interface ContainerCardProps {
   container: Container;
   config: Config;
+  animationState?: AnimationState;
 }
 
-export function ContainerCard({ container, config }: ContainerCardProps) {
+export function ContainerCard({
+  container,
+  config,
+  animationState = "none",
+}: ContainerCardProps) {
   const links = buildWebUiLinks(container, config);
   const imageLinks = getImageLinks(container.image);
   const sortedPorts = sortPorts(container.ports);
 
+  const animationClass =
+    animationState === "entering"
+      ? "animate-container-enter"
+      : animationState === "updated"
+        ? "animate-container-pulse"
+        : "";
+
   return (
-    <article className="flex h-full flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4 shadow-soft">
+    <article
+      className={`flex h-full flex-col gap-4 rounded-2xl border border-slate-800 bg-slate-900/40 p-4 shadow-soft transition-all duration-300 ${animationClass}`}
+    >
       <header className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-white">
@@ -75,16 +91,16 @@ export function ContainerCard({ container, config }: ContainerCardProps) {
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {sortedPorts.map((port, index) => {
-                    const href = port.PublicPort
-                      ? buildPortLink(container.host, port.PublicPort, config)
+                    const href = port.public
+                      ? buildPortLink(container.host, port.public, config)
                       : null;
                     return (
-                      <tr key={`${port.PrivatePort}-${port.PublicPort ?? "internal"}-${index}`}>
+                      <tr key={`${port.private}-${port.public ?? "internal"}-${index}`}>
                         <td className="px-3 py-2 text-slate-100">
-                          {port.IP || "—"}
+                          —
                         </td>
                         <td className="px-3 py-2 text-slate-100">
-                          {port.PublicPort ? (
+                          {port.public ? (
                             href ? (
                               <a
                                 href={href}
@@ -92,20 +108,20 @@ export function ContainerCard({ container, config }: ContainerCardProps) {
                                 rel="noreferrer"
                                 className="font-semibold text-sky-300 transition hover:text-sky-200"
                               >
-                                {port.PublicPort}
+                                {port.public}
                               </a>
                             ) : (
-                              port.PublicPort
+                              port.public
                             )
                           ) : (
                             "—"
                           )}
                         </td>
                         <td className="px-3 py-2 text-slate-100">
-                          {port.PrivatePort}
+                          {port.private}
                         </td>
                         <td className="px-3 py-2 text-slate-100">
-                          {port.Type}
+                          {port.type}
                         </td>
                       </tr>
                     );
