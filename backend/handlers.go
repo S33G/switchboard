@@ -12,7 +12,28 @@ type API struct {
 }
 
 func NewAPI(store *StateStore, hub *Hub, config Config) *API {
-	return &API{store: store, hub: hub, config: config}
+	api := &API{store: store, hub: hub, config: config}
+	api.computeProxyRoutes()
+	return api
+}
+
+func (api *API) computeProxyRoutes() {
+	proxyRoutes := make(map[string]map[string][]string)
+
+	for domain, containerName := range api.config.ProxyMappings {
+		scheme := api.config.Defaults.Scheme
+		if scheme == "" {
+			scheme = "http"
+		}
+		url := scheme + "://" + domain
+
+		if proxyRoutes[containerName] == nil {
+			proxyRoutes[containerName] = make(map[string][]string)
+		}
+		proxyRoutes[containerName]["domains"] = append(proxyRoutes[containerName]["domains"], url)
+	}
+
+	api.config.ProxyRoutes = proxyRoutes
 }
 
 func (api *API) Register(mux *http.ServeMux) {

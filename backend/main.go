@@ -41,7 +41,7 @@ func main() {
 	flag.Parse()
 
 	if strings.TrimSpace(*initConfigPath) != "" {
-		cfg, err := defaultConfigFromEnv()
+		cfg, _, err := loadConfigFromEnv()
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -64,9 +64,33 @@ func main() {
 		return
 	}
 
-	config, err := loadConfigFromEnv()
+	config, configSource, err := loadConfigFromEnv()
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	log.Printf("=== Configuration loaded from: %s ===", configSource)
+	log.Printf("Configured hosts (%d):", len(config.Hosts))
+	for _, host := range config.Hosts {
+		log.Printf("  - %s: %s", host.Name, host.Endpoint)
+	}
+	log.Printf("Base domain: %s", config.Defaults.BaseDomain)
+	log.Printf("Scheme: %s", config.Defaults.Scheme)
+
+	if len(config.ProxyMappings) > 0 {
+		log.Println("Proxy Routes:")
+		for domain, target := range config.ProxyMappings {
+			log.Printf("  %s -> %s", domain, target)
+		}
+	} else {
+		log.Println("Proxy Routes: none")
+	}
+	log.Println("==========================================")
+
+	if configData, err := marshalConfigYAML(config); err == nil {
+		log.Println("Full configuration:")
+		log.Print(string(configData))
+		log.Println("==========================================")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
