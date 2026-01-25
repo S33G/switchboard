@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tufanbarisyildirim/gonginx/config"
+	"github.com/tufanbarisyildirim/gonginx/dumper"
 )
 
 var dnsLabelRe = regexp.MustCompile(`[^a-z0-9-]`)
@@ -74,16 +77,17 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 		return snapshot[i].Host < snapshot[j].Host
 	})
 
-	// Sort proxy mapping domains for deterministic output.
 	mappingDomains := make([]string, 0, len(cfg.ParsedMappings))
 	for d := range cfg.ParsedMappings {
 		mappingDomains = append(mappingDomains, d)
 	}
 	sort.Strings(mappingDomains)
 
-	var b strings.Builder
-	b.WriteString("# GENERATED FILE. DO NOT EDIT.\n")
-	b.WriteString("# Source: Switchboard container snapshot\n\n")
+	conf := &config.Config{
+		Block: &config.Block{
+			Directives: []config.IDirective{},
+		},
+	}
 
 	for _, domain := range mappingDomains {
 		target := cfg.ParsedMappings[domain]
@@ -93,21 +97,8 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 			continue
 		}
 
-		b.WriteString("server {\n")
-		b.WriteString("  listen 80;\n")
-		b.WriteString("  server_name " + domain + ";\n")
-		b.WriteString("\n")
-		b.WriteString("  location / {\n")
-		b.WriteString("    proxy_http_version 1.1;\n")
-		b.WriteString("    proxy_set_header Host $host;\n")
-		b.WriteString("    proxy_set_header X-Real-IP $remote_addr;\n")
-		b.WriteString("    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-		b.WriteString("    proxy_set_header X-Forwarded-Proto $scheme;\n")
-		b.WriteString("    proxy_set_header Upgrade $http_upgrade;\n")
-		b.WriteString("    proxy_set_header Connection $connection_upgrade;\n")
-		b.WriteString("    proxy_pass http://" + upstream + ";\n")
-		b.WriteString("  }\n")
-		b.WriteString("}\n\n")
+		serverBlock := buildServerBlock(domain, upstream)
+		conf.Block.Directives = append(conf.Block.Directives, serverBlock)
 	}
 
 	for _, c := range snapshot {
@@ -130,27 +121,78 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 		fqdn := fmt.Sprintf("%s.%s.%s", containerLabel, hostLabel, domain)
 		upstream := hostAddr + ":" + strconv.Itoa(int(port))
 
-		b.WriteString("server {\n")
-		b.WriteString("  listen 80;\n")
-		b.WriteString("  server_name " + fqdn + ";\n")
-		b.WriteString("\n")
-		b.WriteString("  location / {\n")
-		b.WriteString("    proxy_http_version 1.1;\n")
-		b.WriteString("    proxy_set_header Host $host;\n")
-		b.WriteString("    proxy_set_header X-Real-IP $remote_addr;\n")
-		b.WriteString("    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n")
-		b.WriteString("    proxy_set_header X-Forwarded-Proto $scheme;\n")
-		b.WriteString("    proxy_set_header Upgrade $http_upgrade;\n")
-		b.WriteString("    proxy_set_header Connection $connection_upgrade;\n")
-		b.WriteString("    proxy_pass http://" + upstream + ";\n")
-		b.WriteString("  }\n")
-		b.WriteString("}\n\n")
+		serverBlock := buildServerBlock(fqdn, upstream)
+		conf.Block.Directives = append(conf.Block.Directives, serverBlock)
 	}
 
-	return b.String(), nil
+	style := &dumper.Style{
+		SortDirectives:    false,
+		SpaceBeforeBlocks: true,
+		StartIndent:       0,
+		Indent:            2,
+	}
+	return dumper.DumpConfig(conf, style), nil
 }
 
-func startNginxGeneratorLoop(ctx context.Context, store *StateStore, cfg Config, warns *warnLimiter) {
+func buildServerBlock(serverName, upstream string) *config.Directive {
+	serverBlock := &config.Block{Directives: []config.IDirective{}}
+
+	server := &config.Directive{
+		Name:  "server",
+		Block: serverBlock,
+	}
+
+	serverBlock.Directives = append(serverBlock.Directives, &config.Directive{
+		Name:       "listen",
+		Parameters: []config.Parameter{{Value: "80"}},
+	})
+
+	serverBlock.Directives = append(serverBlock.Directives, &config.Directive{
+		Name:       "server_name",
+		Parameters: []config.Parameter{{Value: serverName}},
+	})
+
+	locationBlock := &config.Block{Directives: []config.IDirective{}}
+	location := &config.Directive{
+		Name:       "location",
+		Parameters: []config.Parameter{{Value: "/"}},
+		Block:      locationBlock,
+	}
+
+	locationBlock.Directives = append(locationBlock.Directives, &config.Directive{
+		Name:       "proxy_http_version",
+		Parameters: []config.Parameter{{Value: "1.1"}},
+	})
+
+	proxyHeaders := []struct {
+		name  string
+		value string
+	}{
+		{"Host", "$host"},
+		{"X-Real-IP", "$remote_addr"},
+		{"X-Forwarded-For", "$proxy_add_x_forwarded_for"},
+		{"X-Forwarded-Proto", "$scheme"},
+		{"Upgrade", "$http_upgrade"},
+		{"Connection", "$connection_upgrade"},
+	}
+
+	for _, header := range proxyHeaders {
+		locationBlock.Directives = append(locationBlock.Directives, &config.Directive{
+			Name:       "proxy_set_header",
+			Parameters: []config.Parameter{{Value: header.name}, {Value: header.value}},
+		})
+	}
+
+	locationBlock.Directives = append(locationBlock.Directives, &config.Directive{
+		Name:       "proxy_pass",
+		Parameters: []config.Parameter{{Value: "http://" + upstream}},
+	})
+
+	serverBlock.Directives = append(serverBlock.Directives, location)
+	return server
+}
+
+func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, warns *warnLimiter) {
 	enabled := envBool("NGINX_ENABLED")
 	log.Printf("nginx-gen: called, NGINX_ENABLED=%v (raw=%q)", enabled, os.Getenv("NGINX_ENABLED"))
 	if !enabled {
@@ -181,6 +223,11 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, cfg Config,
 	render := func() {
 		start := time.Now()
 		snapshot := store.Snapshot()
+
+		api.configMutex.RLock()
+		cfg := api.config
+		api.configMutex.RUnlock()
+
 		rendered, err := renderNginxConfig(snapshot, cfg)
 		nginxConfigGenDuration.Observe(time.Since(start).Seconds())
 		if err != nil {
@@ -209,6 +256,9 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, cfg Config,
 			return
 		case <-store.Changed():
 			render()
+		case <-api.ConfigChanged():
+			log.Println("nginx-gen: config changed, re-rendering")
+			render()
 		case <-debounceTimer:
 			if pending == "" {
 				continue
@@ -223,12 +273,14 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, cfg Config,
 	}
 }
 
-func applyNginxConfig(generatedPath, config string, warns *warnLimiter) error {
+func applyNginxConfig(generatedPath, configContent string, warns *warnLimiter) error {
 	dir := filepath.Dir(generatedPath)
 	tmp := filepath.Join(dir, ".switchboard.generated.conf.tmp")
 
+	log.Printf("nginx-gen: applying config (%d bytes)", len(configContent))
+
 	prevBytes, _ := os.ReadFile(generatedPath)
-	if err := os.WriteFile(tmp, []byte(config), 0644); err != nil {
+	if err := os.WriteFile(tmp, []byte(configContent), 0644); err != nil {
 		warns.Warnf("nginx-write", 30*time.Second, "WARN nginx-gen: write %s: %v", tmp, err)
 		return err
 	}
@@ -237,9 +289,10 @@ func applyNginxConfig(generatedPath, config string, warns *warnLimiter) error {
 		return err
 	}
 
-	if err := exec.Command("nginx", "-t").Run(); err != nil {
+	testCmd := exec.Command("nginx", "-t")
+	if output, err := testCmd.CombinedOutput(); err != nil {
 		_ = os.WriteFile(generatedPath, prevBytes, 0644)
-		warns.Warnf("nginx-test", 30*time.Second, "WARN nginx-gen: nginx -t failed (rolled back): %v", err)
+		warns.Warnf("nginx-test", 30*time.Second, "WARN nginx-gen: nginx -t failed (rolled back): %v\n%s", err, string(output))
 		return err
 	}
 
