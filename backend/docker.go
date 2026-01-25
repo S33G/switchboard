@@ -182,10 +182,10 @@ func (m *DockerClientManager) createClient(ctx context.Context, host Host) (*cli
 		endpoint = resolved
 	}
 
-	opts := []client.Opt{client.WithHost(endpoint)}
+	opts := []client.Opt{client.WithHost(endpoint), client.WithAPIVersionNegotiation()}
 	if helper, err := connhelper.GetConnectionHelper(endpoint); err == nil && helper != nil {
 		httpClient := &http.Client{Transport: &http.Transport{DialContext: helper.Dialer}}
-		opts = []client.Opt{client.WithHost(helper.Host), client.WithHTTPClient(httpClient)}
+		opts = []client.Opt{client.WithHost(helper.Host), client.WithHTTPClient(httpClient), client.WithAPIVersionNegotiation()}
 	}
 	if host.TLS != nil && host.TLS.CA != "" && host.TLS.Cert != "" && host.TLS.Key != "" {
 		opts = append(opts, client.WithTLSClientConfig(host.TLS.CA, host.TLS.Cert, host.TLS.Key))
