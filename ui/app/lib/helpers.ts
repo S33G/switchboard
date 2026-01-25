@@ -39,15 +39,18 @@ export function formatPorts(container: Container): string {
 export function buildWebUiLinks(container: Container, config: Config): string[] {
   const scheme = config.defaults.scheme ?? "http";
   const baseDomain = config.defaults.base_domain ?? "";
-  const mappedLinks = Object.entries(config.proxy_mappings)
-    .filter(([, target]) => target === container.name)
-    .map(([host]) => `${scheme}://${host}`);
+  
+  let links: string[] = [];
+  
+  if (config.proxy_routes?.[container.name]?.domains) {
+    links = [...config.proxy_routes[container.name].domains];
+  }
 
   const fallbackLink = baseDomain
     ? `${scheme}://${container.name}.${baseDomain}`
     : "";
 
-  return Array.from(new Set([...mappedLinks, fallbackLink].filter(Boolean)));
+  return Array.from(new Set([...links, fallbackLink].filter(Boolean)));
 }
 
 export function latestUpdate(containers: Container[]): string {
