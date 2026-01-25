@@ -33,8 +33,8 @@ func sanitizeDNSLabel(s string) string {
 
 func choosePublishedPort(c Container) (uint16, bool) {
 	for _, p := range c.Ports {
-		if p.PublicPort > 0 {
-			return uint16(p.PublicPort), true
+		if p.Public > 0 {
+			return p.Public, true
 		}
 	}
 	return 0, false

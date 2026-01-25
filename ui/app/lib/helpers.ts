@@ -1,4 +1,4 @@
-import type { Config, Container, HostGroup } from "./types";
+import type { Config, Container, ContainerPort, HostGroup } from "./types";
 
 export function groupRunningByHost(containers: Container[]): HostGroup[] {
   const grouped = containers
@@ -21,11 +21,13 @@ export function groupRunningByHost(containers: Container[]): HostGroup[] {
 }
 
 export function formatPorts(container: Container): string {
-  if (!container.ports.length) {
+  const sortedPorts = sortPorts(container.ports);
+
+  if (!sortedPorts.length) {
     return "—";
   }
 
-  return container.ports
+  return sortedPorts
     .map((port) => {
       const privatePort = `${port.PrivatePort}/${port.Type}`;
       if (port.PublicPort) {
@@ -36,20 +38,122 @@ export function formatPorts(container: Container): string {
     .join(", ");
 }
 
+export function sortPorts(ports: ContainerPort[]): ContainerPort[] {
+  return [...ports].sort((a, b) => {
+    const aPublic = a.PublicPort ?? Number.POSITIVE_INFINITY;
+    const bPublic = b.PublicPort ?? Number.POSITIVE_INFINITY;
+    if (aPublic !== bPublic) {
+      return aPublic - bPublic;
+    }
+    if (a.PrivatePort !== b.PrivatePort) {
+      return a.PrivatePort - b.PrivatePort;
+    }
+    const typeCompare = a.Type.localeCompare(b.Type);
+    if (typeCompare) {
+      return typeCompare;
+    }
+    return (a.IP ?? "").localeCompare(b.IP ?? "");
+  });
+}
+
+type ImageReference = {
+  registry?: string;
+  path: string;
+};
+
+export type ImageLinks = {
+  dockerHub?: string;
+  github?: string;
+};
+
+function parseImageReference(image: string): ImageReference {
+  const withoutDigest = image.split("@")[0] ?? "";
+  let name = withoutDigest;
+  const lastColon = withoutDigest.lastIndexOf(":");
+  const lastSlash = withoutDigest.lastIndexOf("/");
+  if (lastColon > lastSlash) {
+    name = withoutDigest.slice(0, lastColon);
+  }
+
+  const segments = name.split("/").filter(Boolean);
+  let registry: string | undefined;
+
+  if (segments.length > 1) {
+    const firstSegment = segments[0];
+    if (
+      firstSegment.includes(".") ||
+      firstSegment.includes(":") ||
+      firstSegment === "localhost"
+    ) {
+      registry = firstSegment;
+      segments.shift();
+    }
+  }
+
+  return {
+    registry,
+    path: segments.join("/"),
+  };
+}
+
+export function getImageLinks(image: string): ImageLinks {
+  const { registry, path } = parseImageReference(image);
+  const links: ImageLinks = {};
+
+  if (path && (!registry || registry === "docker.io")) {
+    links.dockerHub = path.includes("/")
+      ? `https://hub.docker.com/r/${path}`
+      : `https://hub.docker.com/_/${path}`;
+  }
+
+  if (registry === "ghcr.io") {
+    const [owner, repo] = path.split("/");
+    if (owner && repo) {
+      links.github = `https://github.com/${owner}/${repo}`;
+    }
+  }
+
+  return links;
+}
+
+export function resolveHostAddress(host: string, config: Config): string {
+  return (config.host_addresses?.[host] ?? host).trim();
+}
+
+export function buildPortLink(
+  host: string,
+  port: number,
+  config: Config
+): string | null {
+  const hostAddress = resolveHostAddress(host, config);
+  if (!hostAddress || port <= 0) {
+    return null;
+  }
+  const scheme = config.defaults.scheme ?? "http";
+  return `${scheme}://${hostAddress}:${port}`;
+}
+
 export function buildWebUiLinks(container: Container, config: Config): string[] {
   const scheme = config.defaults.scheme ?? "http";
   const baseDomain = config.defaults.base_domain ?? "";
-  
+
   let links: string[] = [];
-  
+
   const containerKey = `${container.host}/${container.name}`;
   if (config.proxy_routes?.[containerKey]?.domains) {
     links = [...config.proxy_routes[containerKey].domains];
   }
 
-  const fallbackLink = baseDomain
-    ? `${scheme}://${container.name}.${container.host}.${baseDomain}`
-    : "";
+  const publishedPorts = container.ports.filter(
+    (port) => (port.PublicPort ?? 0) > 0
+  );
+  const canGuessPort = publishedPorts.length === 1;
+  const containerName = container.name?.trim();
+
+  const fallbackLink =
+    !links.length && baseDomain && containerName && canGuessPort
+      ? `${scheme}://${containerName}.${container.host}.${baseDomain}`
+      : "";
 
   return Array.from(new Set([...links, fallbackLink].filter(Boolean)));
 }

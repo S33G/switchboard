@@ -107,20 +107,28 @@ func main() {
 	}
 
 	store := NewStateStore()
+
+	// Create API and initialize proxied ports BEFORE first sync
+	// so that convertPorts() can correctly mark proxied ports
+	mux := http.NewServeMux()
+	api := NewAPI(store, nil, config) // hub is nil for now, will use it later
+	api.Register(mux)
+	mux.Handle("/metrics", promhttp.Handler())
+	setProxiedPorts(api.config.ProxyRoutes)
+
+	// Now do the first sync with proxied ports initialized
 	_ = syncAllHosts(ctx, manager, store, warns)
 
 	hub := NewHub()
 	go hub.Run()
 	go startDiffBroadcaster(ctx, store, hub)
 
+	// Update API's hub reference after creating it
+	api.hub = hub
+
 	go startHealthMonitor(ctx, manager, warns)
 	go startCacheCleaner(ctx, manager)
 	go startEventLoops(ctx, manager, store, hub, warns)
-
-	mux := http.NewServeMux()
-	api := NewAPI(store, hub, config)
-	api.Register(mux)
-	mux.Handle("/metrics", promhttp.Handler())
 
 	log.Println("main: about to start nginx generator loop")
 	go startNginxGeneratorLoop(ctx, store, api, warns)

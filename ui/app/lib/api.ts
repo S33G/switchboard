@@ -32,6 +32,7 @@ const ConfigSchema = z.object({
       scheme: z.string().optional(),
     })
     .optional(),
+  host_addresses: z.record(z.string(), z.string()).optional(),
   proxy_mappings: z.record(z.string(), z.string()).optional(),
   proxy_routes: z.record(z.string(), z.record(z.string(), z.array(z.string()))).optional(),
 });
@@ -68,6 +69,7 @@ export async function getConfig(): Promise<Config> {
 
   return {
     defaults: parsed.data.defaults ?? {},
+    host_addresses: parsed.data.host_addresses ?? {},
     proxy_mappings: parsed.data.proxy_mappings ?? {},
     proxy_routes: parsed.data.proxy_routes ?? {},
   };

@@ -107,6 +107,7 @@ func reloadConfig(configPath string, api *API, hub *Hub) error {
 	oldConfig := api.config
 	api.config = newConfig
 	api.computeProxyRoutes()
+	setProxiedPorts(api.config.ProxyRoutes)
 	api.configMutex.Unlock()
 
 	api.notifyConfigChanged()

@@ -1,9 +1,8 @@
 package main
 
 import (
+	"sort"
 	"time"
-
-	"github.com/docker/docker/api/types/container"
 )
 
 type Host struct {
@@ -38,6 +37,13 @@ type Config struct {
 	ParsedMappings map[string]ProxyTarget         `json:"-"`
 }
 
+type Port struct {
+	Private uint16 `json:"private"`
+	Public  uint16 `json:"public"`
+	Type    string `json:"type"`
+	Proxied bool   `json:"proxied"`
+}
+
 type Container struct {
 	ID        string            `json:"id"`
 	Name      string            `json:"name"`
@@ -45,7 +51,17 @@ type Container struct {
 	State     string            `json:"state"`
 	Status    string            `json:"status"`
 	Host      string            `json:"host"`
-	Ports     []container.Port  `json:"ports"`
+	Ports     []Port            `json:"ports"`
 	Labels    map[string]string `json:"labels"`
 	UpdatedAt time.Time         `json:"updated_at"`
+}
+
+// SortPorts sorts ports by private port number (ascending) and ensures consistent ordering
+func (c *Container) SortPorts() {
+	sort.Slice(c.Ports, func(i, j int) bool {
+		if c.Ports[i].Private != c.Ports[j].Private {
+			return c.Ports[i].Private < c.Ports[j].Private
+		}
+		return c.Ports[i].Public < c.Ports[j].Public
+	})
 }

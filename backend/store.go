@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
+	dockercontainer "github.com/docker/docker/api/types/container"
 )
 
 type ContainerDiff struct {
@@ -63,7 +63,7 @@ func (s *StateStore) Snapshot() []Container {
 	return items
 }
 
-func (s *StateStore) UpdateSingleContainer(hostName string, item container.Summary) {
+func (s *StateStore) UpdateSingleContainer(hostName string, item dockercontainer.Summary) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -81,7 +81,7 @@ func (s *StateStore) UpdateSingleContainer(hostName string, item container.Summa
 		State:     string(item.State),
 		Status:    item.Status,
 		Host:      hostName,
-		Ports:     item.Ports,
+		Ports:     convertPorts(item.Ports, hostName, name),
 		Labels:    labels,
 		UpdatedAt: time.Now(),
 	}
@@ -105,7 +105,7 @@ func (s *StateStore) UpdateSingleContainer(hostName string, item container.Summa
 	s.notifyDiff(diff)
 }
 
-func (s *StateStore) UpdateFromHost(hostName string, containers []container.Summary) {
+func (s *StateStore) UpdateFromHost(hostName string, containers []dockercontainer.Summary) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -131,7 +131,7 @@ func (s *StateStore) UpdateFromHost(hostName string, containers []container.Summ
 			State:     string(item.State),
 			Status:    item.Status,
 			Host:      hostName,
-			Ports:     item.Ports,
+			Ports:     convertPorts(item.Ports, hostName, name),
 			Labels:    labels,
 			UpdatedAt: time.Now(),
 		}
@@ -167,4 +167,75 @@ func normalizeName(names []string) string {
 		return ""
 	}
 	return strings.TrimPrefix(names[0], "/")
+}
+
+func convertPorts(dockerPorts []dockercontainer.Port, hostName string, containerName string) []Port {
+	ports := make([]Port, len(dockerPorts))
+	for i, dp := range dockerPorts {
+		p := Port{
+			Private: uint16(dp.PrivatePort),
+			Public:  dp.PublicPort,
+			Type:    dp.Type,
+		}
+		if p.Public > 0 {
+			p.Proxied = isPortProxied(hostName, containerName, int(p.Public))
+		}
+		ports[i] = p
+	}
+
+	result := make([]Port, len(ports))
+	copy(result, ports)
+
+	result2 := Container{Ports: result}
+	result2.SortPorts()
+
+	return result2.Ports
+}
+
+var proxiedPortsInfo = struct {
+	mu    sync.RWMutex
+	ports map[string]map[string]bool
+}{
+	ports: make(map[string]map[string]bool),
+}
+
+func setProxiedPorts(ports map[string]map[string][]string) {
+	proxiedPortsInfo.mu.Lock()
+	defer proxiedPortsInfo.mu.Unlock()
+
+	newPorts := make(map[string]map[string]bool)
+	for targetStr, targetMap := range ports {
+		for target := range targetMap {
+			key := normalizeProxyKey(targetStr)
+			if newPorts[key] == nil {
+				newPorts[key] = make(map[string]bool)
+			}
+			newPorts[key][target] = true
+		}
+	}
+	proxiedPortsInfo.ports = newPorts
+}
+
+func normalizeProxyKey(target string) string {
+	parts := strings.Split(target, "/")
+	if len(parts) >= 2 {
+		containerPart := parts[1]
+		colonIdx := strings.LastIndex(containerPart, ":")
+		if colonIdx != -1 {
+			return parts[0] + "/" + containerPart[:colonIdx]
+		}
+		return parts[0] + "/" + containerPart
+	}
+	return target
+}
+
+func isPortProxied(hostName string, containerName string, port int) bool {
+	proxiedPortsInfo.mu.RLock()
+	defer proxiedPortsInfo.mu.RUnlock()
+
+	key := hostName + "/" + containerName
+	if proxiedTargets, ok := proxiedPortsInfo.ports[key]; ok {
+		return len(proxiedTargets) > 0
+	}
+	return false
 }

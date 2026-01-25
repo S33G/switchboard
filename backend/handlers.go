@@ -175,6 +175,7 @@ func (api *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 		api.configMutex.Lock()
 		api.config = newConfig
 		api.computeProxyRoutes()
+		setProxiedPorts(api.config.ProxyRoutes)
 		api.configMutex.Unlock()
 
 		w.Header().Set("Content-Type", "application/json")

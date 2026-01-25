@@ -26,6 +26,7 @@ export interface Config {
   defaults: Defaults;
   proxy_mappings: Record<string, string>;
   proxy_routes: Record<string, Record<string, string[]>>;
+  host_addresses?: Record<string, string>;
 }
 
 export interface HostGroup {
