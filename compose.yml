@@ -3,8 +3,8 @@ services:
     build: .
     container_name: switchboard
     ports:
-      - "8051:80"
-      - "8052:8069" # optional (direct API access)
+      - "80:80"
+      # - "8052:8069" # optional (direct API access)
     environment:
       # Switchboard config
       CONFIG_PATH: /config/config.yaml
@@ -17,7 +17,7 @@ services:
       # NGINX_GENERATED_CONF: /etc/nginx/conf.d/switchboard.generated.conf
     volumes:
       # Example config (edit to match your homelab)
-      - ./examples/config.yaml:/config/config.yaml:ro
+      - ./config.yaml:/config/config.yaml:ro
 
       # If you use local docker socket for any host endpoint
       - /var/run/docker.sock:/var/run/docker.sock

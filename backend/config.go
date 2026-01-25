@@ -9,27 +9,42 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-func loadConfigFromEnv() (Config, error) {
+func loadConfigFromEnv() (Config, string, error) {
 	path := strings.TrimSpace(os.Getenv("CONFIG_PATH"))
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return Config{}, err
+			return Config{}, "", err
 		}
 		var cfg Config
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			return Config{}, err
+			return Config{}, "", err
 		}
 		cfg.ProxyMappings = ensureMapping(cfg.ProxyMappings)
 		cfg.HostAddresses = ensureMapping(cfg.HostAddresses)
 		cfg.Hosts = ensureHostNames(cfg.Hosts)
 		if len(cfg.Hosts) == 0 {
-			return Config{}, fmt.Errorf("no hosts configured")
+			return Config{}, "", fmt.Errorf("no hosts configured")
 		}
-		return cfg, nil
+		return cfg, path, nil
 	}
 
-	return defaultConfigFromEnv()
+	// Try default_config.yaml
+	defaultPath := "default_config.yaml"
+	if data, err := os.ReadFile(defaultPath); err == nil {
+		var cfg Config
+		if err := yaml.Unmarshal(data, &cfg); err == nil {
+			cfg.ProxyMappings = ensureMapping(cfg.ProxyMappings)
+			cfg.HostAddresses = ensureMapping(cfg.HostAddresses)
+			cfg.Hosts = ensureHostNames(cfg.Hosts)
+			if len(cfg.Hosts) > 0 {
+				return cfg, defaultPath, nil
+			}
+		}
+	}
+
+	cfg, err := defaultConfigFromEnv()
+	return cfg, "DOCKER_HOSTS env", err
 }
 
 func defaultConfigFromEnv() (Config, error) {

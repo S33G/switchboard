@@ -1,8 +1,6 @@
 hosts:
-- name: c3po
+- name: host
   endpoint: unix:///var/run/docker.sock
-- name: deathstar
-  endpoint: context://deathstar
 proxy_mappings: {}
 defaults:
   base_domain: local
