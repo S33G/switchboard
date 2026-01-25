@@ -9,8 +9,8 @@
 hosts:
   - name: c3po
     endpoint: unix:///var/run/docker.sock
-  - name: deathstar
-    endpoint: context://deathstar
+  # - name: deathstar
+  #   endpoint: context://deathstar
 
 host_addresses:
   c3po: c3po.home
