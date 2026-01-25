@@ -2,9 +2,11 @@ FROM golang:1.25.4-alpine AS builder
 
 WORKDIR /src/backend
 
+# Copy dependency files first for better caching
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
+# Copy source code only after dependencies are cached
 COPY backend/ ./
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
@@ -17,9 +19,11 @@ WORKDIR /src/ui
 
 RUN corepack enable
 
+# Copy dependency files first for better caching
 COPY ui/package.json ui/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
+# Copy source code only after dependencies are cached
 COPY ui/ ./
 RUN pnpm build
 

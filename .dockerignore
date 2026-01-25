@@ -1,8 +1,25 @@
 .git
+.gitignore
 
-# Just in case
+# Dependencies
 **/node_modules
-**/.next
+**/.pnpm-store
+**/vendor
 
-# UI output
+# Build outputs
+**/.next
 ui/out
+backend/switchboard
+
+# Development files
+**/.env*.local
+**/*.log
+**/.DS_Store
+**/tmp
+**/temp
+
+# IDE
+**/.vscode
+**/.idea
+**/*.swp
+**/*.swo
