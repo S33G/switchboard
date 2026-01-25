@@ -3,35 +3,118 @@ package main
 import (
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/moby/moby/api/types/container"
+	"github.com/docker/docker/api/types/container"
 )
 
+type ContainerDiff struct {
+	Added   []Container `json:"added"`
+	Updated []Container `json:"updated"`
+	Removed []string    `json:"removed"`
+}
+
 type StateStore struct {
-	mu         sync.RWMutex
-	containers map[string]*Container
+	mu         sync.Mutex
+	containers atomic.Value
+	onChange   chan struct{}
+	onDiff     chan ContainerDiff
 }
 
 func NewStateStore() *StateStore {
-	return &StateStore{containers: make(map[string]*Container)}
+	s := &StateStore{
+		onChange: make(chan struct{}, 1),
+		onDiff:   make(chan ContainerDiff, 1),
+	}
+	s.containers.Store(make(map[string]*Container))
+	return s
+}
+
+func (s *StateStore) Changed() <-chan struct{} {
+	return s.onChange
+}
+
+func (s *StateStore) Diffs() <-chan ContainerDiff {
+	return s.onDiff
+}
+
+func (s *StateStore) notifyChange() {
+	select {
+	case s.onChange <- struct{}{}:
+	default:
+	}
+}
+
+func (s *StateStore) notifyDiff(diff ContainerDiff) {
+	select {
+	case s.onDiff <- diff:
+	default:
+	}
 }
 
 func (s *StateStore) Snapshot() []Container {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	items := make([]Container, 0, len(s.containers))
-	for _, container := range s.containers {
+	containerMap := s.containers.Load().(map[string]*Container)
+	items := make([]Container, 0, len(containerMap))
+	for _, container := range containerMap {
 		copyItem := *container
 		items = append(items, copyItem)
 	}
 	return items
 }
 
+func (s *StateStore) UpdateSingleContainer(hostName string, item container.Summary) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	name := normalizeName(item.Names)
+	labels := item.Labels
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels["host"] = hostName
+
+	newContainer := Container{
+		ID:        item.ID,
+		Name:      name,
+		Image:     item.Image,
+		State:     string(item.State),
+		Status:    item.Status,
+		Host:      hostName,
+		Ports:     item.Ports,
+		Labels:    labels,
+		UpdatedAt: time.Now(),
+	}
+
+	oldMap := s.containers.Load().(map[string]*Container)
+	newMap := make(map[string]*Container, len(oldMap)+1)
+	for k, v := range oldMap {
+		newMap[k] = v
+	}
+
+	var diff ContainerDiff
+	if _, exists := oldMap[item.ID]; exists {
+		diff.Updated = []Container{newContainer}
+	} else {
+		diff.Added = []Container{newContainer}
+	}
+
+	newMap[item.ID] = &newContainer
+	s.containers.Store(newMap)
+	s.notifyChange()
+	s.notifyDiff(diff)
+}
+
 func (s *StateStore) UpdateFromHost(hostName string, containers []container.Summary) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	oldMap := s.containers.Load().(map[string]*Container)
+	newMap := make(map[string]*Container)
+
+	var diff ContainerDiff
 	seen := make(map[string]struct{}, len(containers))
+
 	for _, item := range containers {
 		seen[item.ID] = struct{}{}
 		name := normalizeName(item.Names)
@@ -40,7 +123,8 @@ func (s *StateStore) UpdateFromHost(hostName string, containers []container.Summ
 			labels = make(map[string]string)
 		}
 		labels["host"] = hostName
-		s.containers[item.ID] = &Container{
+
+		newContainer := Container{
 			ID:        item.ID,
 			Name:      name,
 			Image:     item.Image,
@@ -51,14 +135,30 @@ func (s *StateStore) UpdateFromHost(hostName string, containers []container.Summ
 			Labels:    labels,
 			UpdatedAt: time.Now(),
 		}
+
+		if _, exists := oldMap[item.ID]; exists {
+			diff.Updated = append(diff.Updated, newContainer)
+		} else {
+			diff.Added = append(diff.Added, newContainer)
+		}
+
+		newMap[item.ID] = &newContainer
 	}
-	for id, existing := range s.containers {
+
+	for id, existing := range oldMap {
 		if existing.Host != hostName {
+			newMap[id] = existing
 			continue
 		}
 		if _, ok := seen[id]; !ok {
-			delete(s.containers, id)
+			diff.Removed = append(diff.Removed, id)
 		}
+	}
+
+	s.containers.Store(newMap)
+	s.notifyChange()
+	if len(diff.Added) > 0 || len(diff.Updated) > 0 || len(diff.Removed) > 0 {
+		s.notifyDiff(diff)
 	}
 }
 

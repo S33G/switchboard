@@ -5,12 +5,15 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type warnLimiter struct {
@@ -108,7 +111,10 @@ func main() {
 
 	hub := NewHub()
 	go hub.Run()
+	go startDiffBroadcaster(ctx, store, hub)
 
+	go startHealthMonitor(ctx, manager, warns)
+	go startCacheCleaner(ctx, manager)
 	go startEventLoops(ctx, manager, store, hub, warns)
 	log.Println("main: about to start nginx generator loop")
 	go startNginxGeneratorLoop(ctx, store, config, warns)
@@ -122,6 +128,16 @@ func main() {
 	if envBool("ACCESS_LOGS") {
 		handler = withAccessLogs(log.Default(), handler)
 	}
+
+	debugMux := http.NewServeMux()
+	debugMux.Handle("/metrics", promhttp.Handler())
+	debugServer := &http.Server{Addr: ":6060", Handler: debugMux}
+	go func() {
+		log.Println("Debug server (pprof + metrics) listening on :6060")
+		if err := debugServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Debug server error: %v", err)
+		}
+	}()
 
 	port := strings.TrimSpace(os.Getenv("API_PORT"))
 	if port == "" {
@@ -141,6 +157,59 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	_ = server.Shutdown(shutdownCtx)
+}
+
+func startCacheCleaner(ctx context.Context, manager *DockerClientManager) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			manager.cache.Clean()
+		}
+	}
+}
+
+func startHealthMonitor(ctx context.Context, manager *DockerClientManager, warns *warnLimiter) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, hostName := range manager.HostNames() {
+				go func(host string) {
+					pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+					defer cancel()
+
+					if err := manager.Ping(pingCtx, host); err != nil {
+						warns.Warnf("health|"+host, 2*time.Minute, "WARN health check failed for %s: %v, attempting reconnect", host, err)
+						if reconnectErr := manager.ReconnectHost(ctx, host); reconnectErr != nil {
+							warns.Warnf("reconnect|"+host, 2*time.Minute, "WARN reconnect failed for %s: %v", host, reconnectErr)
+						} else {
+							log.Printf("Successfully reconnected to host %s", host)
+						}
+					}
+				}(hostName)
+			}
+		}
+	}
+}
+
+func startDiffBroadcaster(ctx context.Context, store *StateStore, hub *Hub) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case diff := <-store.Diffs():
+			hub.BroadcastDiff(diff)
+		}
+	}
 }
 
 func startEventLoops(ctx context.Context, manager *DockerClientManager, store *StateStore, hub *Hub, warns *warnLimiter) {
@@ -163,10 +232,26 @@ func startEventLoops(ctx context.Context, manager *DockerClientManager, store *S
 					select {
 					case <-ctx.Done():
 						return
-					case <-result.Messages:
-						if syncErr := syncHost(ctx, manager, store, hub, hostName); syncErr != nil {
-							warns.Warnf("sync|"+hostName, 30*time.Second, "WARN docker sync %s: %v", hostName, syncErr)
+					case event := <-result.Messages:
+						if event.Actor.ID == "" {
 							continue
+						}
+
+						dockerEventsTotal.WithLabelValues(hostName, string(event.Action)).Inc()
+
+						switch event.Action {
+						case "start", "die", "stop", "pause", "unpause", "kill":
+							if syncErr := syncSingleContainer(ctx, manager, store, hub, hostName, event.Actor.ID); syncErr != nil {
+								warns.Warnf("sync-single|"+hostName, 10*time.Second, "WARN sync single container %s/%s: %v, falling back to full sync", hostName, event.Actor.ID[:12], syncErr)
+								if fullSyncErr := syncHost(ctx, manager, store, hub, hostName); fullSyncErr != nil {
+									warns.Warnf("sync|"+hostName, 30*time.Second, "WARN docker sync %s: %v", hostName, fullSyncErr)
+								}
+							}
+						case "create", "destroy", "rename":
+							if syncErr := syncHost(ctx, manager, store, hub, hostName); syncErr != nil {
+								warns.Warnf("sync|"+hostName, 30*time.Second, "WARN docker sync %s: %v", hostName, syncErr)
+							}
+						default:
 						}
 					case <-result.Err:
 						warns.Warnf("events-stream|"+hostName, 30*time.Second, "WARN docker events stream %s: disconnected", hostName)
@@ -190,14 +275,40 @@ func syncAllHosts(ctx context.Context, manager *DockerClientManager, store *Stat
 	return nil
 }
 
+func syncSingleContainer(ctx context.Context, manager *DockerClientManager, store *StateStore, hub *Hub, hostName string, containerID string) error {
+	start := time.Now()
+	defer func() {
+		syncDuration.WithLabelValues(hostName).Observe(time.Since(start).Seconds())
+	}()
+
+	summary, err := manager.InspectContainer(ctx, hostName, containerID)
+	if err != nil {
+		return err
+	}
+
+	store.UpdateSingleContainer(hostName, *summary)
+	return nil
+}
+
 func syncHost(ctx context.Context, manager *DockerClientManager, store *StateStore, hub *Hub, hostName string) error {
+	start := time.Now()
+	defer func() {
+		syncDuration.WithLabelValues(hostName).Observe(time.Since(start).Seconds())
+	}()
+
 	containers, err := manager.ListContainers(ctx, hostName)
 	if err != nil {
 		return err
 	}
 	store.UpdateFromHost(hostName, containers)
-	if hub != nil {
-		hub.BroadcastSnapshot(store.Snapshot())
+
+	stateCounts := make(map[string]int)
+	for _, c := range containers {
+		stateCounts[string(c.State)]++
 	}
+	for state, count := range stateCounts {
+		containerCount.WithLabelValues(hostName, state).Set(float64(count))
+	}
+
 	return nil
 }

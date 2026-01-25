@@ -29,15 +29,18 @@ func (h *Hub) Run() {
 		select {
 		case conn := <-h.register:
 			h.clients[conn] = struct{}{}
+			wsClientsConnected.Inc()
 		case conn := <-h.unregister:
 			delete(h.clients, conn)
 			_ = conn.Close()
+			wsClientsConnected.Dec()
 		case message := <-h.broadcast:
 			for conn := range h.clients {
 				_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 				if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
 					delete(h.clients, conn)
 					_ = conn.Close()
+					wsClientsConnected.Dec()
 				}
 			}
 		}
@@ -65,6 +68,21 @@ func (h *Hub) BroadcastSnapshot(snapshot []Container) {
 	payload := map[string]any{
 		"type":    "containers_snapshot",
 		"payload": snapshot,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	select {
+	case h.broadcast <- data:
+	default:
+	}
+}
+
+func (h *Hub) BroadcastDiff(diff ContainerDiff) {
+	payload := map[string]any{
+		"type":    "containers_diff",
+		"payload": diff,
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
