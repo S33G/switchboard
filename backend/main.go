@@ -230,18 +230,21 @@ func startEventLoops(ctx context.Context, manager *DockerClientManager, store *S
 	for _, host := range manager.HostNames() {
 		hostName := host
 		go func() {
+			log.Printf("EVENT_LOOP_START: host=%s", hostName)
 			for {
 				select {
 				case <-ctx.Done():
 					return
 				default:
 				}
+				log.Printf("EVENT_LOOP_CONNECTING: host=%s", hostName)
 				result, err := manager.Events(ctx, hostName)
 				if err != nil {
 					warns.Warnf("events|"+hostName, 30*time.Second, "WARN docker events %s: %v", hostName, err)
 					time.Sleep(2 * time.Second)
 					continue
 				}
+				log.Printf("EVENT_LOOP_CONNECTED: host=%s", hostName)
 				for {
 					select {
 					case <-ctx.Done():
@@ -253,8 +256,11 @@ func startEventLoops(ctx context.Context, manager *DockerClientManager, store *S
 
 						dockerEventsTotal.WithLabelValues(hostName, string(event.Action)).Inc()
 
+						log.Printf("EVENT: host=%s action=%s container=%s", hostName, event.Action, event.Actor.ID[:12])
 						switch event.Action {
 						case "start", "die", "stop", "pause", "unpause", "kill":
+							manager.cache.Invalidate(event.Actor.ID)
+							log.Printf("SYNC_SINGLE: host=%s container=%s", hostName, event.Actor.ID[:12])
 							if syncErr := syncSingleContainer(ctx, manager, store, hub, hostName, event.Actor.ID); syncErr != nil {
 								warns.Warnf("sync-single|"+hostName, 10*time.Second, "WARN sync single container %s/%s: %v, falling back to full sync", hostName, event.Actor.ID[:12], syncErr)
 								if fullSyncErr := syncHost(ctx, manager, store, hub, hostName); fullSyncErr != nil {
@@ -262,6 +268,8 @@ func startEventLoops(ctx context.Context, manager *DockerClientManager, store *S
 								}
 							}
 						case "create", "destroy", "rename":
+							manager.cache.Invalidate(event.Actor.ID)
+							log.Printf("SYNC_HOST: host=%s reason=%s", hostName, event.Action)
 							if syncErr := syncHost(ctx, manager, store, hub, hostName); syncErr != nil {
 								warns.Warnf("sync|"+hostName, 30*time.Second, "WARN docker sync %s: %v", hostName, syncErr)
 							}

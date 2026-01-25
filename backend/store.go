@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,14 @@ type ContainerDiff struct {
 	Added   []Container `json:"added"`
 	Updated []Container `json:"updated"`
 	Removed []string    `json:"removed"`
+}
+
+func NewContainerDiff() ContainerDiff {
+	return ContainerDiff{
+		Added:   []Container{},
+		Updated: []Container{},
+		Removed: []string{},
+	}
 }
 
 type StateStore struct {
@@ -49,7 +58,9 @@ func (s *StateStore) notifyChange() {
 func (s *StateStore) notifyDiff(diff ContainerDiff) {
 	select {
 	case s.onDiff <- diff:
+		log.Printf("DIFF SENT: added=%d updated=%d removed=%d", len(diff.Added), len(diff.Updated), len(diff.Removed))
 	default:
+		log.Printf("DIFF DROPPED (channel full): added=%d updated=%d removed=%d", len(diff.Added), len(diff.Updated), len(diff.Removed))
 	}
 }
 
@@ -92,7 +103,7 @@ func (s *StateStore) UpdateSingleContainer(hostName string, item dockercontainer
 		newMap[k] = v
 	}
 
-	var diff ContainerDiff
+	diff := NewContainerDiff()
 	if _, exists := oldMap[item.ID]; exists {
 		diff.Updated = []Container{newContainer}
 	} else {
@@ -112,7 +123,7 @@ func (s *StateStore) UpdateFromHost(hostName string, containers []dockercontaine
 	oldMap := s.containers.Load().(map[string]*Container)
 	newMap := make(map[string]*Container)
 
-	var diff ContainerDiff
+	diff := NewContainerDiff()
 	seen := make(map[string]struct{}, len(containers))
 
 	for _, item := range containers {

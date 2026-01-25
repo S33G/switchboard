@@ -62,6 +62,9 @@ func (c *Container) SortPorts() {
 		if c.Ports[i].Private != c.Ports[j].Private {
 			return c.Ports[i].Private < c.Ports[j].Private
 		}
-		return c.Ports[i].Public < c.Ports[j].Public
+		if c.Ports[i].Public != c.Ports[j].Public {
+			return c.Ports[i].Public < c.Ports[j].Public
+		}
+		return c.Ports[i].Type < c.Ports[j].Type
 	})
 }
