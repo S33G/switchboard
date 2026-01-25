@@ -9,16 +9,17 @@ services:
     environment:
       # Switchboard config
       CONFIG_PATH: /config/config.yaml
+      COMPOSE_BAKE: true
 
       # Enable nginx config generation + reloads
-      NGINX_ENABLED: "1"
+      NGINX_ENABLED: true
 
       # Optional knobs
       # NGINX_RELOAD_DEBOUNCE: 1500ms
       # NGINX_GENERATED_CONF: /etc/nginx/conf.d/switchboard.generated.conf
     volumes:
       # Example config (edit to match your homelab)
-      - ./config.yaml:/config/config.yaml:ro
+      - ./config:/config
 
       # If you use local docker socket for any host endpoint
       - /var/run/docker.sock:/var/run/docker.sock
