@@ -7,10 +7,10 @@ export const apiBaseUrl =
   (typeof window !== "undefined" ? window.location.origin : "http://localhost:8069");
 
 const ContainerPortSchema = z.object({
-  IP: z.string().optional(),
-  PrivatePort: z.number(),
-  PublicPort: z.number().optional(),
-  Type: z.string(),
+  private: z.number(),
+  public: z.number().optional(),
+  type: z.string(),
+  proxied: z.boolean().optional(),
 });
 
 export const ContainerSchema = z.object({

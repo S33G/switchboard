@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import uFuzzy from "@leeoniya/ufuzzy";
 
 import { getConfig, getContainers } from "./lib/api";
 import { groupRunningByHost, latestUpdate } from "./lib/helpers";
 import type { Config, Container } from "./lib/types";
 import {
+  applyContainerDiff,
   buildWebSocketUrl,
-  parseSnapshotMessage,
+  parseWebSocketMessage,
   type WebSocketStatus,
 } from "./lib/websocket";
 import { DashboardSkeleton } from "./components/dashboard-skeleton";
@@ -15,9 +17,11 @@ import { HostSection } from "./components/host-section";
 import { ContainersTable } from "./components/containers-table";
 import { ViewToggle } from "./components/view-toggle";
 import { useViewMode } from "./lib/use-view-mode";
+import { useContainerSearch } from "./lib/use-container-search";
 
 type LoadStatus = "idle" | "loading" | "success" | "error";
 const RECONNECT_DELAY_MS = 5000;
+const ANIMATION_DURATION_MS = 600;
 
 export default function HomePage() {
   const [refreshKey, setRefreshKey] = useState(0);
@@ -31,6 +35,24 @@ export default function HomePage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [viewMode, setViewMode] = useViewMode();
+  const [searchQuery, setSearchQuery] = useContainerSearch();
+
+  const [animatingIds, setAnimatingIds] = useState<{
+    added: Set<string>;
+    updated: Set<string>;
+    removed: Set<string>;
+  }>({ added: new Set(), updated: new Set(), removed: new Set() });
+
+  const animationTimeoutRef = useRef<number | null>(null);
+
+  const clearAnimations = useCallback(() => {
+    if (animationTimeoutRef.current) {
+      window.clearTimeout(animationTimeoutRef.current);
+    }
+    animationTimeoutRef.current = window.setTimeout(() => {
+      setAnimatingIds({ added: new Set(), updated: new Set(), removed: new Set() });
+    }, ANIMATION_DURATION_MS);
+  }, []);
 
   const handleRefresh = () => {
     startTransition(() => {
@@ -106,13 +128,31 @@ export default function HomePage() {
         }
 
         try {
-          const parsed = parseSnapshotMessage(JSON.parse(event.data));
-          if (!parsed) {
+          const message = parseWebSocketMessage(JSON.parse(event.data));
+          if (!message) {
             return;
           }
 
-          setContainers(parsed);
-          setLastUpdated(latestUpdate(parsed));
+          if (message.type === "snapshot") {
+            setContainers(message.containers);
+            setLastUpdated(latestUpdate(message.containers));
+          } else if (message.type === "diff") {
+            setContainers((current) => {
+              const result = applyContainerDiff(current, message.diff);
+
+              if (result.addedIds.size > 0 || result.updatedIds.size > 0 || result.removedIds.size > 0) {
+                setAnimatingIds({
+                  added: result.addedIds,
+                  updated: result.updatedIds,
+                  removed: result.removedIds,
+                });
+                clearAnimations();
+              }
+
+              setLastUpdated(latestUpdate(result.containers));
+              return result.containers;
+            });
+          }
         } catch (error) {
           console.error(error);
         }
@@ -142,11 +182,40 @@ export default function HomePage() {
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
       }
+      if (animationTimeoutRef.current) {
+        window.clearTimeout(animationTimeoutRef.current);
+      }
       socket?.close();
     };
-  }, []);
+  }, [clearAnimations]);
 
-  const groups = groupRunningByHost(containers);
+  const runningContainers = useMemo(
+    () => containers.filter((container) => container.state === "running"),
+    [containers]
+  );
+
+  const filteredContainers = useMemo(() => {
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) {
+      return runningContainers;
+    }
+
+    const haystack = runningContainers.map((container) =>
+      [container.name, container.image, container.host, container.status]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+    const matcher = new uFuzzy();
+    const result = matcher.filter(haystack, trimmedQuery);
+    const matchIndexes = result ?? [];
+    const matchSet = new Set(matchIndexes);
+
+    return runningContainers.filter((_, index) => matchSet.has(index));
+  }, [runningContainers, searchQuery]);
+
+  const groups = groupRunningByHost(filteredContainers);
+  const hasSearch = searchQuery.trim().length > 0;
 
   return (
     <main className="min-h-screen bg-slate-950 px-6 py-10 text-slate-100 lg:px-16">
@@ -163,6 +232,21 @@ export default function HomePage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <div className="flex-1 min-w-[220px]">
+            <label className="sr-only" htmlFor="container-search">
+              Search running containers
+            </label>
+            <input
+              id="container-search"
+              type="search"
+              value={searchQuery}
+              onChange={(event) => {
+                void setSearchQuery(event.target.value);
+              }}
+              placeholder="Search running containers"
+              className="w-full rounded-full border border-slate-800 bg-slate-900/70 px-4 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-slate-500 focus:outline-none"
+            />
+          </div>
           <ViewToggle view={viewMode} onChange={setViewMode} />
           <span
             className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] ${
@@ -206,18 +290,27 @@ export default function HomePage() {
         ) : config ? (
           <div className="space-y-6">
             {viewMode === "list" ? (
-              <ContainersTable containers={containers} config={config} />
+              <ContainersTable
+                containers={filteredContainers}
+                config={config}
+                animatingIds={animatingIds}
+                hasSearch={hasSearch}
+              />
             ) : groups.length ? (
               groups.map((group) => (
                 <HostSection
                   key={group.host}
                   group={group}
                   config={config}
+                  animatingIds={animatingIds}
+                  hasSearch={hasSearch}
                 />
               ))
             ) : (
               <div className="rounded-3xl border border-dashed border-slate-800 bg-slate-900/40 p-8 text-center text-slate-300">
-                No running containers detected yet.
+                {hasSearch
+                  ? "No running containers match your search yet."
+                  : "No running containers detected yet."}
               </div>
             )}
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500">

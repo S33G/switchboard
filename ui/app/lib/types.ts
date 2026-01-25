@@ -1,8 +1,8 @@
 export interface ContainerPort {
-  IP?: string;
-  PrivatePort: number;
-  PublicPort?: number;
-  Type: string;
+  private: number;
+  public?: number;
+  type: string;
+  proxied?: boolean;
 }
 
 export interface Container {
