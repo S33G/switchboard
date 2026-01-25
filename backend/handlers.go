@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 )
 
 type API struct {
@@ -64,9 +65,51 @@ func (api *API) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 // @Produce json
 // @Success 200 {array} Container
 // @Router /api/containers [get]
-func (api *API) handleContainers(w http.ResponseWriter, _ *http.Request) {
+func (api *API) handleContainers(w http.ResponseWriter, r *http.Request) {
+	snapshot := api.store.Snapshot()
+
+	limitStr := r.URL.Query().Get("limit")
+	offsetStr := r.URL.Query().Get("offset")
+
+	limit := 0
+	offset := 0
+
+	if limitStr != "" {
+		if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
+			limit = val
+		}
+	}
+
+	if offsetStr != "" {
+		if val, err := strconv.Atoi(offsetStr); err == nil && val >= 0 {
+			offset = val
+		}
+	}
+
+	total := len(snapshot)
+
+	if limit > 0 {
+		if offset >= total {
+			offset = 0
+		}
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+
+		response := map[string]any{
+			"containers": snapshot[offset:end],
+			"total":      total,
+			"limit":      limit,
+			"offset":     offset,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(api.store.Snapshot())
+	_ = json.NewEncoder(w).Encode(snapshot)
 }
 
 // @Summary Get configuration

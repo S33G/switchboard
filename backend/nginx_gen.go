@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"os"
@@ -73,11 +74,19 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 		return snapshot[i].Host < snapshot[j].Host
 	})
 
+	// Sort proxy mapping domains for deterministic output.
+	mappingDomains := make([]string, 0, len(cfg.ParsedMappings))
+	for d := range cfg.ParsedMappings {
+		mappingDomains = append(mappingDomains, d)
+	}
+	sort.Strings(mappingDomains)
+
 	var b strings.Builder
 	b.WriteString("# GENERATED FILE. DO NOT EDIT.\n")
 	b.WriteString("# Source: Switchboard container snapshot\n\n")
 
-	for domain, target := range cfg.ParsedMappings {
+	for _, domain := range mappingDomains {
+		target := cfg.ParsedMappings[domain]
 		upstream, err := resolveTargetPort(target, cfg)
 		if err != nil {
 			log.Printf("WARN nginx-gen: skipping domain %s: %v", domain, err)
@@ -156,79 +165,90 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, cfg Config,
 
 	log.Printf("nginx-gen: starting loop, target=%s", generatedPath)
 
-	debounce := 1500 * time.Millisecond
+	baseDebounce := 1500 * time.Millisecond
 	if v := strings.TrimSpace(os.Getenv("NGINX_RELOAD_DEBOUNCE")); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
-			debounce = d
+			baseDebounce = d
 		}
 	}
 
-	var lastApplied string
+	tracker := newDebounceTracker()
+	var lastAppliedHash [32]byte
 	var pending string
-	var lastChange time.Time
+	var pendingHash [32]byte
+	var debounceTimer <-chan time.Time
 
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
+	render := func() {
+		start := time.Now()
+		snapshot := store.Snapshot()
+		rendered, err := renderNginxConfig(snapshot, cfg)
+		nginxConfigGenDuration.Observe(time.Since(start).Seconds())
+		if err != nil {
+			warns.Warnf("nginx-render", 30*time.Second, "WARN nginx-gen: %v", err)
+			return
+		}
+		hash := sha256.Sum256([]byte(rendered))
+		if hash == lastAppliedHash {
+			pending = ""
+			return
+		}
+		pending = rendered
+		pendingHash = hash
+
+		tracker.recordChange()
+		adaptiveDebounce := tracker.calculateDebounce(baseDebounce)
+		debounceTimer = time.After(adaptiveDebounce)
+		log.Printf("nginx-gen: config changed, will apply after adaptive debounce (%v)", adaptiveDebounce)
+	}
+
+	render()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if pending == "" {
-				snapshot := store.Snapshot()
-				rendered, err := renderNginxConfig(snapshot, cfg)
-				if err != nil {
-					warns.Warnf("nginx-render", 30*time.Second, "WARN nginx-gen: %v", err)
-					continue
-				}
-				log.Printf("nginx-gen: rendered %d bytes, lastApplied %d bytes", len(rendered), len(lastApplied))
-				if rendered != lastApplied {
-					pending = rendered
-					lastChange = time.Now()
-					log.Printf("nginx-gen: pending config set, will apply after debounce (%v)", debounce)
-				}
-			}
-
+		case <-store.Changed():
+			render()
+		case <-debounceTimer:
 			if pending == "" {
 				continue
 			}
-			if time.Since(lastChange) < debounce {
-				continue
+			if err := applyNginxConfig(generatedPath, pending, warns); err == nil {
+				lastAppliedHash = pendingHash
+				log.Printf("nginx-gen: applied %d bytes", len(pending))
 			}
-
-			// Apply pending config.
-			dir := filepath.Dir(generatedPath)
-			tmp := filepath.Join(dir, ".switchboard.generated.conf.tmp")
-
-			prevBytes, _ := os.ReadFile(generatedPath)
-			if err := os.WriteFile(tmp, []byte(pending), 0644); err != nil {
-				warns.Warnf("nginx-write", 30*time.Second, "WARN nginx-gen: write %s: %v", tmp, err)
-				pending = ""
-				continue
-			}
-			if err := os.Rename(tmp, generatedPath); err != nil {
-				warns.Warnf("nginx-rename", 30*time.Second, "WARN nginx-gen: rename %s -> %s: %v", tmp, generatedPath, err)
-				pending = ""
-				continue
-			}
-
-			if err := exec.Command("nginx", "-t").Run(); err != nil {
-				_ = os.WriteFile(generatedPath, prevBytes, 0644)
-				warns.Warnf("nginx-test", 30*time.Second, "WARN nginx-gen: nginx -t failed (rolled back): %v", err)
-				pending = ""
-				continue
-			}
-
-			if err := exec.Command("nginx", "-s", "reload").Run(); err != nil {
-				warns.Warnf("nginx-reload", 30*time.Second, "WARN nginx-gen: nginx reload failed: %v", err)
-				pending = ""
-				continue
-			}
-
-			lastApplied = pending
 			pending = ""
-			log.Printf("nginx-gen: applied %d bytes", len(lastApplied))
+			debounceTimer = nil
 		}
 	}
+}
+
+func applyNginxConfig(generatedPath, config string, warns *warnLimiter) error {
+	dir := filepath.Dir(generatedPath)
+	tmp := filepath.Join(dir, ".switchboard.generated.conf.tmp")
+
+	prevBytes, _ := os.ReadFile(generatedPath)
+	if err := os.WriteFile(tmp, []byte(config), 0644); err != nil {
+		warns.Warnf("nginx-write", 30*time.Second, "WARN nginx-gen: write %s: %v", tmp, err)
+		return err
+	}
+	if err := os.Rename(tmp, generatedPath); err != nil {
+		warns.Warnf("nginx-rename", 30*time.Second, "WARN nginx-gen: rename %s -> %s: %v", tmp, generatedPath, err)
+		return err
+	}
+
+	if err := exec.Command("nginx", "-t").Run(); err != nil {
+		_ = os.WriteFile(generatedPath, prevBytes, 0644)
+		warns.Warnf("nginx-test", 30*time.Second, "WARN nginx-gen: nginx -t failed (rolled back): %v", err)
+		return err
+	}
+
+	if err := exec.Command("nginx", "-s", "reload").Run(); err != nil {
+		nginxReloadErrors.Inc()
+		warns.Warnf("nginx-reload", 30*time.Second, "WARN nginx-gen: nginx reload failed: %v", err)
+		return err
+	}
+
+	nginxReloadsTotal.Inc()
+	return nil
 }

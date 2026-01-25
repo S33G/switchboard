@@ -3,7 +3,7 @@ package main
 import (
 	"time"
 
-	"github.com/moby/moby/api/types/container"
+	"github.com/docker/docker/api/types/container"
 )
 
 type Host struct {
@@ -39,13 +39,13 @@ type Config struct {
 }
 
 type Container struct {
-	ID        string                  `json:"id"`
-	Name      string                  `json:"name"`
-	Image     string                  `json:"image"`
-	State     string                  `json:"state"`
-	Status    string                  `json:"status"`
-	Host      string                  `json:"host"`
-	Ports     []container.PortSummary `json:"ports"`
-	Labels    map[string]string       `json:"labels"`
-	UpdatedAt time.Time               `json:"updated_at"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Image     string            `json:"image"`
+	State     string            `json:"state"`
+	Status    string            `json:"status"`
+	Host      string            `json:"host"`
+	Ports     []container.Port  `json:"ports"`
+	Labels    map[string]string `json:"labels"`
+	UpdatedAt time.Time         `json:"updated_at"`
 }

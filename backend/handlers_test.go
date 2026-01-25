@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/moby/moby/api/types/container"
+	"github.com/docker/docker/api/types/container"
 )
 
 func TestHandlers(t *testing.T) {
