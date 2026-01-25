@@ -116,13 +116,19 @@ func main() {
 	go startHealthMonitor(ctx, manager, warns)
 	go startCacheCleaner(ctx, manager)
 	go startEventLoops(ctx, manager, store, hub, warns)
-	log.Println("main: about to start nginx generator loop")
-	go startNginxGeneratorLoop(ctx, store, config, warns)
-	log.Println("main: nginx generator loop goroutine started")
 
 	mux := http.NewServeMux()
 	api := NewAPI(store, hub, config)
 	api.Register(mux)
+	mux.Handle("/metrics", promhttp.Handler())
+
+	log.Println("main: about to start nginx generator loop")
+	go startNginxGeneratorLoop(ctx, store, api, warns)
+	log.Println("main: nginx generator loop goroutine started")
+
+	if err := startConfigWatcher(ctx, configSource, api, hub); err != nil {
+		log.Printf("WARN failed to start config watcher: %v", err)
+	}
 
 	handler := http.Handler(mux)
 	if envBool("ACCESS_LOGS") {
@@ -275,7 +281,7 @@ func syncAllHosts(ctx context.Context, manager *DockerClientManager, store *Stat
 	return nil
 }
 
-func syncSingleContainer(ctx context.Context, manager *DockerClientManager, store *StateStore, hub *Hub, hostName string, containerID string) error {
+func syncSingleContainer(ctx context.Context, manager *DockerClientManager, store *StateStore, _ *Hub, hostName string, containerID string) error {
 	start := time.Now()
 	defer func() {
 		syncDuration.WithLabelValues(hostName).Observe(time.Since(start).Seconds())
@@ -290,7 +296,7 @@ func syncSingleContainer(ctx context.Context, manager *DockerClientManager, stor
 	return nil
 }
 
-func syncHost(ctx context.Context, manager *DockerClientManager, store *StateStore, hub *Hub, hostName string) error {
+func syncHost(ctx context.Context, manager *DockerClientManager, store *StateStore, _ *Hub, hostName string) error {
 	start := time.Now()
 	defer func() {
 		syncDuration.WithLabelValues(hostName).Observe(time.Since(start).Seconds())
