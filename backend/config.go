@@ -23,6 +23,7 @@ func loadConfigFromEnv() (Config, string, error) {
 		cfg.ProxyMappings = ensureMapping(cfg.ProxyMappings)
 		cfg.HostAddresses = ensureMapping(cfg.HostAddresses)
 		cfg.Hosts = ensureHostNames(cfg.Hosts)
+		cfg.ParsedMappings = parseProxyMappings(cfg.ProxyMappings)
 		if len(cfg.Hosts) == 0 {
 			return Config{}, "", fmt.Errorf("no hosts configured")
 		}
@@ -37,6 +38,7 @@ func loadConfigFromEnv() (Config, string, error) {
 			cfg.ProxyMappings = ensureMapping(cfg.ProxyMappings)
 			cfg.HostAddresses = ensureMapping(cfg.HostAddresses)
 			cfg.Hosts = ensureHostNames(cfg.Hosts)
+			cfg.ParsedMappings = parseProxyMappings(cfg.ProxyMappings)
 			if len(cfg.Hosts) > 0 {
 				return cfg, defaultPath, nil
 			}
@@ -65,6 +67,7 @@ func defaultConfigFromEnv() (Config, error) {
 	cfg.ProxyMappings = ensureMapping(cfg.ProxyMappings)
 	cfg.HostAddresses = ensureMapping(cfg.HostAddresses)
 	cfg.Hosts = ensureHostNames(cfg.Hosts)
+	cfg.ParsedMappings = parseProxyMappings(cfg.ProxyMappings)
 	return cfg, nil
 }
 
@@ -120,4 +123,66 @@ func ensureHostNames(hosts []Host) []Host {
 		updated = append(updated, host)
 	}
 	return updated
+}
+
+func parseProxyMapping(value string) (ProxyTarget, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ProxyTarget{}, fmt.Errorf("empty mapping value")
+	}
+
+	parts := strings.SplitN(value, "/", 2)
+	if len(parts) != 2 {
+		return ProxyTarget{}, fmt.Errorf("invalid format: expected host/container[:port], got %q", value)
+	}
+
+	host := strings.TrimSpace(parts[0])
+	containerAndPort := strings.TrimSpace(parts[1])
+
+	if host == "" {
+		return ProxyTarget{}, fmt.Errorf("empty host in mapping %q", value)
+	}
+	if containerAndPort == "" {
+		return ProxyTarget{}, fmt.Errorf("empty container in mapping %q", value)
+	}
+
+	container := containerAndPort
+	port := 0
+
+	if idx := strings.LastIndex(containerAndPort, ":"); idx != -1 {
+		container = strings.TrimSpace(containerAndPort[:idx])
+		portStr := strings.TrimSpace(containerAndPort[idx+1:])
+
+		if portStr != "" {
+			parsed, err := fmt.Sscanf(portStr, "%d", &port)
+			if err != nil || parsed != 1 {
+				return ProxyTarget{}, fmt.Errorf("invalid port in mapping %q: %q", value, portStr)
+			}
+			if port <= 0 || port > 65535 {
+				return ProxyTarget{}, fmt.Errorf("port out of range in mapping %q: %d", value, port)
+			}
+		}
+	}
+
+	if container == "" {
+		return ProxyTarget{}, fmt.Errorf("empty container name in mapping %q", value)
+	}
+
+	return ProxyTarget{
+		Host:      host,
+		Container: container,
+		Port:      port,
+	}, nil
+}
+
+func parseProxyMappings(mappings map[string]string) map[string]ProxyTarget {
+	parsed := make(map[string]ProxyTarget)
+	for domain, value := range mappings {
+		target, err := parseProxyMapping(value)
+		if err != nil {
+			continue
+		}
+		parsed[domain] = target
+	}
+	return parsed
 }

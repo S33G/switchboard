@@ -23,12 +23,19 @@ type Defaults struct {
 	Scheme     string `yaml:"scheme" json:"scheme"`
 }
 
+type ProxyTarget struct {
+	Host      string
+	Container string
+	Port      int
+}
+
 type Config struct {
-	Hosts         []Host                         `yaml:"hosts" json:"hosts"`
-	ProxyMappings map[string]string              `yaml:"proxy_mappings" json:"proxy_mappings"`
-	ProxyRoutes   map[string]map[string][]string `json:"proxy_routes"` // containerName -> { domain: [urls] }
-	HostAddresses map[string]string              `yaml:"host_addresses" json:"host_addresses"`
-	Defaults      Defaults                       `yaml:"defaults" json:"defaults"`
+	Hosts          []Host                         `yaml:"hosts" json:"hosts"`
+	ProxyMappings  map[string]string              `yaml:"proxy_mappings" json:"proxy_mappings"`
+	ProxyRoutes    map[string]map[string][]string `json:"proxy_routes"`
+	HostAddresses  map[string]string              `yaml:"host_addresses" json:"host_addresses"`
+	Defaults       Defaults                       `yaml:"defaults" json:"defaults"`
+	ParsedMappings map[string]ProxyTarget         `json:"-"`
 }
 
 type Container struct {

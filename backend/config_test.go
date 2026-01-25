@@ -48,3 +48,82 @@ func TestWriteConfigYAML_RoundTrip(t *testing.T) {
 		t.Fatalf("unexpected round-trip config: %+v", got)
 	}
 }
+
+func TestParseProxyMapping_ValidFormats(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantHost  string
+		wantCont  string
+		wantPort  int
+		wantError bool
+	}{
+		{"with port", "homelab/api:8080", "homelab", "api", 8080, false},
+		{"without port", "homelab/web", "homelab", "web", 0, false},
+		{"complex name with port", "remote-server/my-container:3000", "remote-server", "my-container", 3000, false},
+		{"standard ports", "host/container:80", "host", "container", 80, false},
+		{"https port", "host/container:443", "host", "container", 443, false},
+		{"max port", "host/container:65535", "host", "container", 65535, false},
+		{"empty string", "", "", "", 0, true},
+		{"missing slash", "hostcontainer:8080", "", "", 0, true},
+		{"missing host", "/container:8080", "", "", 0, true},
+		{"missing container", "host/:8080", "", "", 0, true},
+		{"invalid port negative", "host/container:-1", "", "", 0, true},
+		{"invalid port zero", "host/container:0", "", "", 0, true},
+		{"invalid port too large", "host/container:65536", "", "", 0, true},
+		{"invalid port non-numeric", "host/container:abc", "", "", 0, true},
+		{"port with colon but empty", "host/container:", "host", "container", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseProxyMapping(tt.input)
+			if tt.wantError {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.Host != tt.wantHost {
+				t.Errorf("Host: got %q, want %q", got.Host, tt.wantHost)
+			}
+			if got.Container != tt.wantCont {
+				t.Errorf("Container: got %q, want %q", got.Container, tt.wantCont)
+			}
+			if got.Port != tt.wantPort {
+				t.Errorf("Port: got %d, want %d", got.Port, tt.wantPort)
+			}
+		})
+	}
+}
+
+func TestParseProxyMappings_SkipsInvalid(t *testing.T) {
+	input := map[string]string{
+		"valid1.com":   "host1/container1:8080",
+		"valid2.com":   "host2/container2",
+		"invalid1.com": "invalid-format",
+		"invalid2.com": "host/container:99999",
+	}
+
+	result := parseProxyMappings(input)
+
+	if len(result) != 2 {
+		t.Fatalf("expected 2 valid mappings, got %d", len(result))
+	}
+
+	if _, ok := result["valid1.com"]; !ok {
+		t.Error("expected valid1.com in result")
+	}
+	if _, ok := result["valid2.com"]; !ok {
+		t.Error("expected valid2.com in result")
+	}
+	if _, ok := result["invalid1.com"]; ok {
+		t.Error("invalid1.com should not be in result")
+	}
+	if _, ok := result["invalid2.com"]; ok {
+		t.Error("invalid2.com should not be in result")
+	}
+}
