@@ -110,7 +110,9 @@ func main() {
 	go hub.Run()
 
 	go startEventLoops(ctx, manager, store, hub, warns)
+	log.Println("main: about to start nginx generator loop")
 	go startNginxGeneratorLoop(ctx, store, config, warns)
+	log.Println("main: nginx generator loop goroutine started")
 
 	mux := http.NewServeMux()
 	api := NewAPI(store, hub, config)
