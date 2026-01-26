@@ -1,0 +1,58 @@
+name: Test and Lint
+
+on:
+  workflow_call:
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: 'ui/pnpm-lock.yaml'
+
+      - name: Backend - Go tests
+        working-directory: ./backend
+        run: go test ./...
+
+      - name: Backend - Go fmt
+        working-directory: ./backend
+        run: |
+          if [ -n "$(gofmt -s -l .)" ]; then
+            echo "Go code is not formatted"
+            gofmt -s -d .
+            exit 1
+          fi
+
+      - name: Backend - Go mod tidy
+        working-directory: ./backend
+        run: go mod tidy --check
+
+      - name: Frontend - Install dependencies
+        working-directory: ./ui
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend - Lint
+        working-directory: ./ui
+        run: pnpm lint
+
+      - name: Frontend - Build
+        working-directory: ./ui
+        run: pnpm build
