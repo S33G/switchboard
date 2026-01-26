@@ -10,13 +10,14 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@leeoniya/ufuzzy": "^1.0.19",
     "@tailwindcss/postcss": "^4.0.0",
+    "@tanstack/react-table": "^8.21.3",
     "next": "16.1.4",
     "next-usequerystate": "^1.20.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "tailwindcss": "^4.1.18",
-    "@leeoniya/ufuzzy": "^1.0.19",
     "zod": "^4.3.6"
   },
   "devDependencies": {
