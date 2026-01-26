@@ -1,4 +1,4 @@
-import type { Config, HostGroup } from "../lib/types";
+import type { ColumnConfig, Config, HostGroup } from "../lib/types";
 import { ContainerCard, type AnimationState } from "./container-card";
 
 interface AnimatingIds {
@@ -10,6 +10,7 @@ interface AnimatingIds {
 interface HostSectionProps {
   group: HostGroup;
   config: Config;
+  columnConfig: ColumnConfig;
   animatingIds?: AnimatingIds;
   hasSearch?: boolean;
 }
@@ -27,6 +28,7 @@ function getAnimationState(
 export function HostSection({
   group,
   config,
+  columnConfig,
   animatingIds,
   hasSearch = false,
 }: HostSectionProps) {
@@ -58,6 +60,7 @@ export function HostSection({
             key={container.id}
             container={container}
             config={config}
+            columnConfig={columnConfig}
             animationState={getAnimationState(container.id, animatingIds)}
           />
         ))}
