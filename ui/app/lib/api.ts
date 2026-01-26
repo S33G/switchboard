@@ -13,16 +13,30 @@ const ContainerPortSchema = z.object({
   proxied: z.boolean().optional(),
 });
 
+const MountInfoSchema = z.object({
+  type: z.string(),
+  source: z.string(),
+  destination: z.string(),
+  mode: z.string(),
+});
+
 export const ContainerSchema = z.object({
   id: z.string(),
   name: z.string(),
   image: z.string(),
+  image_id: z.string(),
+  command: z.string(),
   state: z.string(),
   status: z.string(),
   host: z.string(),
   ports: z.array(ContainerPortSchema).optional().default([]),
   labels: z.record(z.string(), z.string()).optional().default({}),
+  created_at: z.string(),
   updated_at: z.string(),
+  size_rw: z.number(),
+  size_rootfs: z.number(),
+  networks: z.array(z.string()).optional().default([]),
+  mounts: z.array(MountInfoSchema).optional().default([]),
 });
 
 const ConfigSchema = z.object({
