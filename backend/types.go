@@ -44,16 +44,30 @@ type Port struct {
 	Proxied bool   `json:"proxied"`
 }
 
+type MountInfo struct {
+	Type        string `json:"type"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Mode        string `json:"mode"`
+}
+
 type Container struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Image     string            `json:"image"`
-	State     string            `json:"state"`
-	Status    string            `json:"status"`
-	Host      string            `json:"host"`
-	Ports     []Port            `json:"ports"`
-	Labels    map[string]string `json:"labels"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Image      string            `json:"image"`
+	ImageID    string            `json:"image_id"`
+	Command    string            `json:"command"`
+	State      string            `json:"state"`
+	Status     string            `json:"status"`
+	Host       string            `json:"host"`
+	Ports      []Port            `json:"ports"`
+	Labels     map[string]string `json:"labels"`
+	CreatedAt  time.Time         `json:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
+	SizeRw     int64             `json:"size_rw"`
+	SizeRootFs int64             `json:"size_rootfs"`
+	Networks   []string          `json:"networks"`
+	Mounts     []MountInfo       `json:"mounts"`
 }
 
 // SortPorts sorts ports by private port number (ascending) and ensures consistent ordering

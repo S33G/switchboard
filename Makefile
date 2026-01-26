@@ -18,9 +18,22 @@ build-no-cache:
 
 nginx-test:
 	docker run -d --name nginx-test nginx:latest && \
-	echo "nginx-test container started, waiting 20 seconds..." && \
-	sleep 20 && \
+	echo "nginx-test container started, waiting 5 seconds..." && \
+	sleep 5 && \
 	echo "Stopping and removing nginx-test..." && \
 	docker stop nginx-test && \
 	docker rm nginx-test && \
 	echo "nginx-test container removed"
+
+nginx-test-multi:
+	@for i in 1 2 3 4 5; do \
+		docker run -d --name nginx-test-$$i nginx:latest; \
+	done && \
+	echo "Started 5 nginx-test containers, waiting 5 seconds..." && \
+	sleep 5 && \
+	echo "Stopping and removing nginx-test containers..." && \
+	for i in 1 2 3 4 5; do \
+		docker stop nginx-test-$$i; \
+		docker rm nginx-test-$$i; \
+	done && \
+	echo "All nginx-test containers removed"

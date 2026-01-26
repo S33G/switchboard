@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -86,15 +87,22 @@ func (s *StateStore) UpdateSingleContainer(hostName string, item dockercontainer
 	labels["host"] = hostName
 
 	newContainer := Container{
-		ID:        item.ID,
-		Name:      name,
-		Image:     item.Image,
-		State:     string(item.State),
-		Status:    item.Status,
-		Host:      hostName,
-		Ports:     convertPorts(item.Ports, hostName, name),
-		Labels:    labels,
-		UpdatedAt: time.Now(),
+		ID:         item.ID,
+		Name:       name,
+		Image:      item.Image,
+		ImageID:    item.ImageID,
+		Command:    item.Command,
+		State:      string(item.State),
+		Status:     item.Status,
+		Host:       hostName,
+		Ports:      convertPorts(item.Ports, hostName, name),
+		Labels:     labels,
+		CreatedAt:  time.Unix(item.Created, 0),
+		UpdatedAt:  time.Now(),
+		SizeRw:     item.SizeRw,
+		SizeRootFs: item.SizeRootFs,
+		Networks:   extractNetworkNames(item.NetworkSettings),
+		Mounts:     convertMounts(item.Mounts),
 	}
 
 	oldMap := s.containers.Load().(map[string]*Container)
@@ -136,15 +144,22 @@ func (s *StateStore) UpdateFromHost(hostName string, containers []dockercontaine
 		labels["host"] = hostName
 
 		newContainer := Container{
-			ID:        item.ID,
-			Name:      name,
-			Image:     item.Image,
-			State:     string(item.State),
-			Status:    item.Status,
-			Host:      hostName,
-			Ports:     convertPorts(item.Ports, hostName, name),
-			Labels:    labels,
-			UpdatedAt: time.Now(),
+			ID:         item.ID,
+			Name:       name,
+			Image:      item.Image,
+			ImageID:    item.ImageID,
+			Command:    item.Command,
+			State:      string(item.State),
+			Status:     item.Status,
+			Host:       hostName,
+			Ports:      convertPorts(item.Ports, hostName, name),
+			Labels:     labels,
+			CreatedAt:  time.Unix(item.Created, 0),
+			UpdatedAt:  time.Now(),
+			SizeRw:     item.SizeRw,
+			SizeRootFs: item.SizeRootFs,
+			Networks:   extractNetworkNames(item.NetworkSettings),
+			Mounts:     convertMounts(item.Mounts),
 		}
 
 		if _, exists := oldMap[item.ID]; exists {
@@ -201,6 +216,35 @@ func convertPorts(dockerPorts []dockercontainer.Port, hostName string, container
 	result2.SortPorts()
 
 	return result2.Ports
+}
+
+func extractNetworkNames(settings *dockercontainer.NetworkSettingsSummary) []string {
+	if settings == nil || settings.Networks == nil {
+		return []string{}
+	}
+	names := make([]string, 0, len(settings.Networks))
+	for name := range settings.Networks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func convertMounts(dockerMounts []dockercontainer.MountPoint) []MountInfo {
+	mounts := make([]MountInfo, len(dockerMounts))
+	for i, m := range dockerMounts {
+		mode := "rw"
+		if !m.RW {
+			mode = "ro"
+		}
+		mounts[i] = MountInfo{
+			Type:        string(m.Type),
+			Source:      m.Source,
+			Destination: m.Destination,
+			Mode:        mode,
+		}
+	}
+	return mounts
 }
 
 var proxiedPortsInfo = struct {
