@@ -18,6 +18,8 @@ import { ContainersTable } from "./components/containers-table";
 import { ViewToggle } from "./components/view-toggle";
 import { useViewMode } from "./lib/use-view-mode";
 import { useContainerSearch } from "./lib/use-container-search";
+import { useColumnConfig } from "./lib/use-column-config";
+import { ColumnConfigurator } from "./components/column-configurator";
 
 type LoadStatus = "idle" | "loading" | "success" | "error";
 const RECONNECT_DELAY_MS = 5000;
@@ -36,6 +38,7 @@ export default function HomePage() {
   const [isPending, startTransition] = useTransition();
   const [viewMode, setViewMode] = useViewMode();
   const [searchQuery, setSearchQuery] = useContainerSearch();
+  const [columnConfig, saveColumnConfig, resetColumnConfig] = useColumnConfig();
 
   const [animatingIds, setAnimatingIds] = useState<{
     added: Set<string>;
@@ -248,6 +251,11 @@ export default function HomePage() {
             />
           </div>
           <ViewToggle view={viewMode} onChange={setViewMode} />
+          <ColumnConfigurator
+            config={columnConfig}
+            onSave={saveColumnConfig}
+            onReset={resetColumnConfig}
+          />
           <span
             className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] ${
               status === "error"
@@ -274,7 +282,7 @@ export default function HomePage() {
             onClick={handleRefresh}
             className="rounded-full border border-slate-700 bg-slate-900 px-5 py-2 text-sm font-semibold text-slate-100 transition hover:border-slate-500"
           >
-            Refresh now
+            Refresh
           </button>
         </div>
       </header>
@@ -293,6 +301,7 @@ export default function HomePage() {
               <ContainersTable
                 containers={filteredContainers}
                 config={config}
+                columnConfig={columnConfig}
                 animatingIds={animatingIds}
                 hasSearch={hasSearch}
               />
@@ -302,6 +311,7 @@ export default function HomePage() {
                   key={group.host}
                   group={group}
                   config={config}
+                  columnConfig={columnConfig}
                   animatingIds={animatingIds}
                   hasSearch={hasSearch}
                 />
