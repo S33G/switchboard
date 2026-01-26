@@ -10,7 +10,11 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  test-and-lint:
+    uses: ./.github/workflows/test-and-lint.yml
+
   build:
+    needs: test-and-lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -30,7 +34,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=pr
-            type=sha,prefix=pr-{{base_ref}}-
+            type=sha,prefix=pr-{{base_ref}}-,format=short
 
       - name: Build Docker image (no push)
         uses: docker/build-push-action@v6
