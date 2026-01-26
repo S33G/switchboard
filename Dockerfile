@@ -30,6 +30,11 @@ RUN pnpm build
 
 FROM nginx:1.27-alpine
 
+# OCI labels to link package to repository
+LABEL org.opencontainers.image.source=https://github.com/S33G/switchboard
+LABEL org.opencontainers.image.description="Central nginx reverse proxy for all your Docker containers across multiple hosts"
+LABEL org.opencontainers.image.licenses=MIT
+
 RUN apk add --no-cache \
       bash \
       ca-certificates \
