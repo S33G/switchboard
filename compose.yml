@@ -5,7 +5,6 @@ services:
     container_name: switchboard
     ports:
       - "80:80"
-      # - "8052:8069" # optional (direct API access)
       - "6060:6060" # optional (pprof metrics)
     environment:
       # Switchboard config
@@ -13,11 +12,12 @@ services:
       COMPOSE_BAKE: true
 
       # Enable nginx config generation + reloads
-      NGINX_CONF_GEN_ENABLED: "0"
+      NGINX_CONF_GEN_ENABLED: "1"
+      NGINX_CONTAINER_NAME: switchboard-nginx
+      NGINX_GENERATED_CONF: /etc/nginx/conf.d/switchboard.generated.conf
 
       # Optional knobs
       # NGINX_RELOAD_DEBOUNCE: 1500ms
-      # NGINX_GENERATED_CONF: /etc/nginx/conf.d/switchboard.generated.conf
     volumes:
       # Example config (edit to match your homelab)
       - ./config:/config
@@ -29,3 +29,23 @@ services:
       - ~/.docker:/root/.docker:ro
       # If those contexts use SSH
       - ~/.ssh:/root/.ssh:ro
+
+      # Shared volume for generated nginx config
+      - nginx-conf:/etc/nginx/conf.d
+    depends_on:
+      - nginx
+
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: switchboard-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      # Shared volume for generated nginx config
+      - nginx-conf:/etc/nginx/conf.d
+    restart: unless-stopped
+
+volumes:
+  nginx-conf:
