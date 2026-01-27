@@ -73,6 +73,8 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 		return "", fmt.Errorf("host_addresses is not configured")
 	}
 
+	useLinuxserverConfs := envBoolDefault("NGINX_USE_LINUXSERVER_CONFS", true)
+
 	sort.Slice(snapshot, func(i, j int) bool {
 		if snapshot[i].Host == snapshot[j].Host {
 			return snapshot[i].Name < snapshot[j].Name
@@ -85,6 +87,8 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 		mappingDomains = append(mappingDomains, d)
 	}
 	sort.Strings(mappingDomains)
+
+	var customConfigs []string
 
 	conf := &config.Config{
 		Block: &config.Block{
@@ -124,6 +128,13 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 		fqdn := fmt.Sprintf("%s.%s.%s", containerLabel, hostLabel, domain)
 		upstream := hostAddr + ":" + strconv.Itoa(int(port))
 
+		if useLinuxserverConfs {
+			if lsConfig := tryLinuxserverConfig(c.Name, hostAddr, int(port), cfg.Defaults.Scheme, fqdn); lsConfig != "" {
+				customConfigs = append(customConfigs, lsConfig)
+				continue
+			}
+		}
+
 		serverBlock := buildServerBlock(fqdn, upstream)
 		conf.Block.Directives = append(conf.Block.Directives, serverBlock)
 	}
@@ -134,7 +145,13 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 		StartIndent:       0,
 		Indent:            2,
 	}
-	return dumper.DumpConfig(conf, style), nil
+	generated := dumper.DumpConfig(conf, style)
+
+	if len(customConfigs) > 0 {
+		generated = generated + "\n" + strings.Join(customConfigs, "\n")
+	}
+
+	return generated, nil
 }
 
 func buildServerBlock(serverName, upstream string) *config.Directive {
@@ -234,13 +251,7 @@ func nginxExecInContainer(ctx context.Context, cli dockerclient.APIClient, conta
 
 func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, warns *warnLimiter) {
 	enabled := envBool("NGINX_CONF_GEN_ENABLED")
-	if !enabled {
-		// Fallback to old name for backward compat
-		if os.Getenv("NGINX_ENABLED") != "" {
-			log.Println("DEPRECATED: NGINX_ENABLED is deprecated, use NGINX_CONF_GEN_ENABLED instead")
-			enabled = envBool("NGINX_ENABLED")
-		}
-	}
+
 	log.Printf("nginx-gen: called, NGINX_CONF_GEN_ENABLED=%v (raw=%q)", enabled, os.Getenv("NGINX_CONF_GEN_ENABLED"))
 	if !enabled {
 		log.Println("nginx-gen: NGINX_CONF_GEN_ENABLED is false, exiting")

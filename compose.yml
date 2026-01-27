@@ -4,17 +4,17 @@ services:
     build: .
     container_name: switchboard
     ports:
-      - "80:80"
+      - "6969:80"
       - "6060:6060" # optional (pprof metrics)
     environment:
       # Switchboard config
       CONFIG_PATH: /config/config.yaml
-      COMPOSE_BAKE: true
 
       # Enable nginx config generation + reloads
-      NGINX_CONF_GEN_ENABLED: "1"
+      NGINX_CONF_GEN_ENABLED: "true"
       NGINX_CONTAINER_NAME: switchboard-nginx
       NGINX_GENERATED_CONF: /etc/nginx/conf.d/switchboard.generated.conf
+      NGINX_USE_LINUXSERVER_CONFS: "true"
 
       # Optional knobs
       # NGINX_RELOAD_DEBOUNCE: 1500ms
@@ -41,7 +41,7 @@ services:
       dockerfile: Dockerfile.nginx
     container_name: switchboard-nginx
     ports:
-      - "8080:80"
+      - "80:80"
     volumes:
       # Shared volume for generated nginx config
       - nginx-conf:/etc/nginx/conf.d

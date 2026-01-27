@@ -2,16 +2,13 @@ FROM golang:1.25.4-alpine AS builder
 
 WORKDIR /src/backend
 
-# Copy dependency files first for better caching
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
-# Copy source code only after dependencies are cached
 COPY backend/ ./
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -trimpath -ldflags="-s -w" -o /out/switchboard .
-
 
 FROM node:22-alpine AS ui-builder
 
@@ -19,21 +16,13 @@ WORKDIR /src/ui
 
 RUN corepack enable
 
-# Copy dependency files first for better caching
 COPY ui/package.json ui/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-# Copy source code only after dependencies are cached
 COPY ui/ ./
 RUN pnpm build
 
-
 FROM alpine:3.21
-
-# OCI labels to link package to repository
-LABEL org.opencontainers.image.source=https://github.com/S33G/switchboard
-LABEL org.opencontainers.image.description="Central nginx reverse proxy for all your Docker containers across multiple hosts"
-LABEL org.opencontainers.image.licenses=MIT
 
 RUN apk add --no-cache \
       bash \
