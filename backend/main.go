@@ -155,7 +155,7 @@ func main() {
 
 	port := strings.TrimSpace(os.Getenv("API_PORT"))
 	if port == "" {
-		port = "8069"
+		port = "80"
 	}
 	server := &http.Server{Addr: ":" + port, Handler: handler}
 	go func() {

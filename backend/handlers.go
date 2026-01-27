@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -71,7 +73,36 @@ func (api *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/containers", api.handleContainers)
 	mux.HandleFunc("/api/config", api.handleConfig)
 	mux.HandleFunc("/ws", api.handleWebsocket)
-	mux.Handle("/", http.FileServer(http.Dir("ui")))
+	mux.Handle("/", spaFileServer("ui"))
+}
+
+func spaFileServer(dir string) http.Handler {
+	fs := http.Dir(dir)
+	fileServer := http.FileServer(fs)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		if strings.HasPrefix(path, "/_next/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			fileServer.ServeHTTP(w, r)
+			return
+		}
+
+		f, err := fs.Open(path)
+		if err != nil {
+			w.Header().Set("Cache-Control", "no-cache")
+			http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+			return
+		}
+		f.Close()
+
+		if path == "/" || path == "/index.html" {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 // @Summary Health check
