@@ -1,12 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -14,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	dockercontainer "github.com/docker/docker/api/types/container"
+	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/tufanbarisyildirim/gonginx/config"
 	"github.com/tufanbarisyildirim/gonginx/dumper"
 )
@@ -192,11 +195,55 @@ func buildServerBlock(serverName, upstream string) *config.Directive {
 	return server
 }
 
+// nginxExecInContainer runs a command inside the nginx container via the Docker API.
+// Returns combined stdout+stderr output and any error (including non-zero exit code).
+func nginxExecInContainer(ctx context.Context, cli dockerclient.APIClient, containerName string, cmd []string) (string, error) {
+	execCfg := dockercontainer.ExecOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+	}
+
+	execResp, err := cli.ContainerExecCreate(ctx, containerName, execCfg)
+	if err != nil {
+		return "", fmt.Errorf("exec create: %w", err)
+	}
+
+	attachResp, err := cli.ContainerExecAttach(ctx, execResp.ID, dockercontainer.ExecAttachOptions{})
+	if err != nil {
+		return "", fmt.Errorf("exec attach: %w", err)
+	}
+	defer attachResp.Close()
+
+	var stdout, stderr bytes.Buffer
+	if _, err := stdcopy.StdCopy(&stdout, &stderr, attachResp.Reader); err != nil {
+		return "", fmt.Errorf("exec read output: %w", err)
+	}
+
+	inspectResp, err := cli.ContainerExecInspect(ctx, execResp.ID)
+	if err != nil {
+		return stdout.String() + stderr.String(), fmt.Errorf("exec inspect: %w", err)
+	}
+
+	combined := stdout.String() + stderr.String()
+	if inspectResp.ExitCode != 0 {
+		return combined, fmt.Errorf("exit code %d", inspectResp.ExitCode)
+	}
+	return combined, nil
+}
+
 func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, warns *warnLimiter) {
-	enabled := envBool("NGINX_ENABLED")
-	log.Printf("nginx-gen: called, NGINX_ENABLED=%v (raw=%q)", enabled, os.Getenv("NGINX_ENABLED"))
+	enabled := envBool("NGINX_CONF_GEN_ENABLED")
 	if !enabled {
-		log.Println("nginx-gen: NGINX_ENABLED is false, exiting")
+		// Fallback to old name for backward compat
+		if os.Getenv("NGINX_ENABLED") != "" {
+			log.Println("DEPRECATED: NGINX_ENABLED is deprecated, use NGINX_CONF_GEN_ENABLED instead")
+			enabled = envBool("NGINX_ENABLED")
+		}
+	}
+	log.Printf("nginx-gen: called, NGINX_CONF_GEN_ENABLED=%v (raw=%q)", enabled, os.Getenv("NGINX_CONF_GEN_ENABLED"))
+	if !enabled {
+		log.Println("nginx-gen: NGINX_CONF_GEN_ENABLED is false, exiting")
 		return
 	}
 
@@ -205,7 +252,20 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, w
 		generatedPath = "/etc/nginx/conf.d/switchboard.generated.conf"
 	}
 
-	log.Printf("nginx-gen: starting loop, target=%s", generatedPath)
+	nginxContainer := strings.TrimSpace(os.Getenv("NGINX_CONTAINER_NAME"))
+	if nginxContainer == "" {
+		nginxContainer = "switchboard-nginx"
+	}
+
+	var dockerCli dockerclient.APIClient
+	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	if err != nil {
+		warns.Warnf("nginx-docker-init", 30*time.Second, "WARN nginx-gen: failed to create Docker client: %v (reload via API disabled)", err)
+	} else {
+		dockerCli = cli
+	}
+
+	log.Printf("nginx-gen: starting loop, target=%s, nginx_container=%s", generatedPath, nginxContainer)
 
 	baseDebounce := 1500 * time.Millisecond
 	if v := strings.TrimSpace(os.Getenv("NGINX_RELOAD_DEBOUNCE")); v != "" {
@@ -263,7 +323,7 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, w
 			if pending == "" {
 				continue
 			}
-			if err := applyNginxConfig(generatedPath, pending, warns); err == nil {
+			if err := applyNginxConfig(ctx, generatedPath, pending, dockerCli, nginxContainer, warns); err == nil {
 				lastAppliedHash = pendingHash
 				log.Printf("nginx-gen: applied %d bytes", len(pending))
 			}
@@ -273,7 +333,7 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, w
 	}
 }
 
-func applyNginxConfig(generatedPath, configContent string, warns *warnLimiter) error {
+func applyNginxConfig(ctx context.Context, generatedPath, configContent string, dockerCli dockerclient.APIClient, nginxContainer string, warns *warnLimiter) error {
 	dir := filepath.Dir(generatedPath)
 	tmp := filepath.Join(dir, ".switchboard.generated.conf.tmp")
 
@@ -289,16 +349,22 @@ func applyNginxConfig(generatedPath, configContent string, warns *warnLimiter) e
 		return err
 	}
 
-	testCmd := exec.Command("nginx", "-t")
-	if output, err := testCmd.CombinedOutput(); err != nil {
+	if dockerCli == nil {
+		warns.Warnf("nginx-no-docker", 30*time.Second, "WARN nginx-gen: no Docker client, config written but nginx not reloaded")
+		return nil
+	}
+
+	output, err := nginxExecInContainer(ctx, dockerCli, nginxContainer, []string{"nginx", "-t"})
+	if err != nil {
 		_ = os.WriteFile(generatedPath, prevBytes, 0644)
-		warns.Warnf("nginx-test", 30*time.Second, "WARN nginx-gen: nginx -t failed (rolled back): %v\n%s", err, string(output))
+		warns.Warnf("nginx-test", 30*time.Second, "WARN nginx-gen: nginx -t failed (rolled back): %v\n%s", err, output)
 		return err
 	}
 
-	if err := exec.Command("nginx", "-s", "reload").Run(); err != nil {
+	output, err = nginxExecInContainer(ctx, dockerCli, nginxContainer, []string{"nginx", "-s", "reload"})
+	if err != nil {
 		nginxReloadErrors.Inc()
-		warns.Warnf("nginx-reload", 30*time.Second, "WARN nginx-gen: nginx reload failed: %v", err)
+		warns.Warnf("nginx-reload", 30*time.Second, "WARN nginx-gen: nginx reload failed: %v\n%s", err, output)
 		return err
 	}
 
