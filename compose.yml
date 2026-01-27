@@ -6,13 +6,14 @@ services:
     ports:
       - "80:80"
       # - "8052:8069" # optional (direct API access)
+      - "6060:6060" # optional (pprof metrics)
     environment:
       # Switchboard config
       CONFIG_PATH: /config/config.yaml
       COMPOSE_BAKE: true
 
       # Enable nginx config generation + reloads
-      NGINX_ENABLED: true
+      NGINX_CONF_GEN_ENABLED: "0"
 
       # Optional knobs
       # NGINX_RELOAD_DEBOUNCE: 1500ms

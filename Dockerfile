@@ -55,7 +55,7 @@ COPY deploy/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENV API_PORT=8069
-ENV NGINX_ENABLED=1
+ENV NGINX_CONF_GEN_ENABLED=1
 ENV DOCKER_API_VERSION=1.49
 
 EXPOSE 80 443 8069
