@@ -14,7 +14,7 @@ Edit `examples/config.yaml` to match your homelab:
 - `host_addresses`: how nginx reaches each Docker host's **published ports** (LAN IP / hostname).
 - `defaults.base_domain`: the domain suffix used to generate routes.
 
-With `NGINX_ENABLED=1`, running containers get vhosts at:
+With `NGINX_CONF_GEN_ENABLED=1`, running containers get vhosts at:
 
 `<container-name>.<host-name>.<defaults.base_domain>`
 

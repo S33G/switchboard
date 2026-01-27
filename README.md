@@ -119,7 +119,7 @@ services:
       # - "8069:8069"  # Optional: Direct API access
     environment:
       CONFIG_PATH: /config/config.yaml
-      NGINX_ENABLED: "1"
+      NGINX_CONF_GEN_ENABLED: "1"
       TZ: America/New_York
     volumes:
       # Config file
@@ -460,8 +460,9 @@ ws.onmessage = (event) => {
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CONFIG_PATH` | - | Path to YAML config file |
-| `API_PORT` | `8069` | Backend API port |
-| `NGINX_ENABLED` | `1` | Enable nginx config generation |
+| `API_PORT` | `80` | Backend API port |
+| `NGINX_CONF_GEN_ENABLED` | `1` | Enable nginx config generation and reloads |
+| `NGINX_CONTAINER_NAME` | `switchboard-nginx` | Name of nginx container for Docker API exec |
 | `NGINX_RELOAD_DEBOUNCE` | `1500ms` | Debounce interval for nginx reloads |
 | `NGINX_GENERATED_CONF` | `/etc/nginx/conf.d/switchboard.generated.conf` | Path to generated nginx config |
 | `TZ` | `UTC` | Timezone for logs |

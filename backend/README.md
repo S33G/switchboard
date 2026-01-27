@@ -2,6 +2,8 @@
 
 This service watches one-or-more Docker daemons (local socket, TCP, TLS, SSH) and exposes their container state over an HTTP + WebSocket API.
 
+**Note:** As of v2.1, the Go backend serves the Switchboard UI directly on port 80 (configurable via `API_PORT`). nginx runs in a separate container for reverse proxy duties to route traffic to discovered containers.
+
 ## Configure Docker hosts via Docker Context
 
 Switchboard accepts host endpoints in two places:

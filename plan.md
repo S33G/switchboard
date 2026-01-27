@@ -45,11 +45,14 @@ Build a Go service that monitors Docker containers across multiple hosts, genera
 4. Clients load snapshot → subscribe to deltas via WebSocket.
 
 ### Deployment Topology
-- Monitoring service container with optional mounts:
-  - Docker sockets (local/remote)
-  - nginx config volume (shared)
-- nginx container receives config updates + reload signal.
-- React build served via nginx alongside reverse proxy.
+- **Go backend container** (serves UI + API on port 80):
+  - Docker socket mounts (local/remote)
+  - Shared volume for nginx config generation
+  - Exposes port 80 (UI+API) and 6060 (metrics/pprof)
+- **nginx container** (reverse proxy):
+  - Shared volume for reading generated config
+  - Receives reload signals via Docker API exec from Go backend
+  - Exposes port 8080 for reverse proxy traffic to discovered containers
 
 ## Interfaces & Data Model
 
