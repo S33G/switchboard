@@ -64,13 +64,13 @@ func resolveTargetPort(target ProxyTarget, cfg Config) (string, error) {
 	return hostAddr + ":" + strconv.Itoa(port), nil
 }
 
-func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
+func renderNginxConfig(snapshot []Container, cfg Config) (string, []*serverBlockConfig, error) {
 	domain := strings.TrimSpace(cfg.Defaults.BaseDomain)
 	if domain == "" {
-		return "", fmt.Errorf("defaults.base_domain is empty")
+		return "", nil, fmt.Errorf("defaults.base_domain is empty")
 	}
 	if cfg.HostAddresses == nil {
-		return "", fmt.Errorf("host_addresses is not configured")
+		return "", nil, fmt.Errorf("host_addresses is not configured")
 	}
 
 	useLinuxserverConfs := envBoolDefault("NGINX_USE_LINUXSERVER_CONFS", true)
@@ -88,13 +88,7 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 	}
 	sort.Strings(mappingDomains)
 
-	var customConfigs []string
-
-	conf := &config.Config{
-		Block: &config.Block{
-			Directives: []config.IDirective{},
-		},
-	}
+	var serverBlocks []*serverBlockConfig
 
 	for _, domain := range mappingDomains {
 		target := cfg.ParsedMappings[domain]
@@ -104,8 +98,11 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 			continue
 		}
 
-		serverBlock := buildServerBlock(domain, upstream)
-		conf.Block.Directives = append(conf.Block.Directives, serverBlock)
+		serverBlocks = append(serverBlocks, &serverBlockConfig{
+			domain:   domain,
+			upstream: upstream,
+			source:   "mapping",
+		})
 	}
 
 	for _, c := range snapshot {
@@ -130,28 +127,64 @@ func renderNginxConfig(snapshot []Container, cfg Config) (string, error) {
 
 		if useLinuxserverConfs {
 			if lsConfig := tryLinuxserverConfig(c.Name, hostAddr, int(port), cfg.Defaults.Scheme, fqdn); lsConfig != "" {
-				customConfigs = append(customConfigs, lsConfig)
+				serverBlocks = append(serverBlocks, &serverBlockConfig{
+					domain:      fqdn,
+					content:     lsConfig,
+					source:      "linuxserver:" + c.Name,
+					isCustom:    true,
+					containerID: c.ID,
+				})
 				continue
 			}
 		}
 
-		serverBlock := buildServerBlock(fqdn, upstream)
-		conf.Block.Directives = append(conf.Block.Directives, serverBlock)
+		serverBlocks = append(serverBlocks, &serverBlockConfig{
+			domain:      fqdn,
+			upstream:    upstream,
+			source:      "auto:" + c.Name,
+			containerID: c.ID,
+		})
 	}
 
-	style := &dumper.Style{
-		SortDirectives:    false,
-		SpaceBeforeBlocks: true,
-		StartIndent:       0,
-		Indent:            2,
-	}
-	generated := dumper.DumpConfig(conf, style)
+	rendered, err := renderServerBlocks(serverBlocks)
+	return rendered, serverBlocks, err
+}
 
-	if len(customConfigs) > 0 {
-		generated = generated + "\n" + strings.Join(customConfigs, "\n")
+type serverBlockConfig struct {
+	domain      string
+	upstream    string
+	content     string
+	source      string
+	isCustom    bool
+	containerID string
+}
+
+func renderServerBlocks(blocks []*serverBlockConfig) (string, error) {
+	var buf strings.Builder
+	buf.WriteString("# Switchboard auto-generated nginx config\n")
+	fmt.Fprintf(&buf, "# Total blocks: %d\n\n", len(blocks))
+
+	for _, block := range blocks {
+		if block.isCustom {
+			buf.WriteString(block.content)
+		} else {
+			conf := &config.Config{
+				Block: &config.Block{
+					Directives: []config.IDirective{buildServerBlock(block.domain, block.upstream)},
+				},
+			}
+			style := &dumper.Style{
+				SortDirectives:    false,
+				SpaceBeforeBlocks: true,
+				StartIndent:       0,
+				Indent:            2,
+			}
+			buf.WriteString(dumper.DumpConfig(conf, style))
+		}
+		buf.WriteString("\n")
 	}
 
-	return generated, nil
+	return buf.String(), nil
 }
 
 func buildServerBlock(serverName, upstream string) *config.Directive {
@@ -289,6 +322,7 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, w
 	var lastAppliedHash [32]byte
 	var pending string
 	var pendingHash [32]byte
+	var pendingServerBlocks []*serverBlockConfig
 	var debounceTimer <-chan time.Time
 
 	render := func() {
@@ -299,7 +333,7 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, w
 		cfg := api.config
 		api.configMutex.RUnlock()
 
-		rendered, err := renderNginxConfig(snapshot, cfg)
+		rendered, blocks, err := renderNginxConfig(snapshot, cfg)
 		nginxConfigGenDuration.Observe(time.Since(start).Seconds())
 		if err != nil {
 			warns.Warnf("nginx-render", 30*time.Second, "WARN nginx-gen: %v", err)
@@ -311,6 +345,7 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, w
 			return
 		}
 		pending = rendered
+		pendingServerBlocks = blocks
 		pendingHash = hash
 
 		tracker.recordChange()
@@ -334,30 +369,61 @@ func startNginxGeneratorLoop(ctx context.Context, store *StateStore, api *API, w
 			if pending == "" {
 				continue
 			}
-			if err := applyNginxConfig(ctx, generatedPath, pending, dockerCli, nginxContainer, warns); err == nil {
+			if err := applyNginxConfigWithBlocks(ctx, generatedPath, pending, pendingServerBlocks, dockerCli, nginxContainer, warns); err == nil {
 				lastAppliedHash = pendingHash
 				log.Printf("nginx-gen: applied %d bytes", len(pending))
 			}
 			pending = ""
+			pendingServerBlocks = nil
 			debounceTimer = nil
 		}
 	}
 }
 
-func applyNginxConfig(ctx context.Context, generatedPath, configContent string, dockerCli dockerclient.APIClient, nginxContainer string, warns *warnLimiter) error {
-	dir := filepath.Dir(generatedPath)
-	tmp := filepath.Join(dir, ".switchboard.generated.conf.tmp")
+func applyNginxConfigWithBlocks(ctx context.Context, generatedPath, configContent string, serverBlocks []*serverBlockConfig, dockerCli dockerclient.APIClient, nginxContainer string, warns *warnLimiter) error {
+	generatedDir := filepath.Dir(generatedPath)
+	confDirPath := filepath.Join(generatedDir, "switchboard.d")
 
-	log.Printf("nginx-gen: applying config (%d bytes)", len(configContent))
-
-	prevBytes, _ := os.ReadFile(generatedPath)
-	if err := os.WriteFile(tmp, []byte(configContent), 0644); err != nil {
-		warns.Warnf("nginx-write", 30*time.Second, "WARN nginx-gen: write %s: %v", tmp, err)
+	if err := os.MkdirAll(confDirPath, 0755); err != nil {
+		warns.Warnf("nginx-mkdir", 30*time.Second, "WARN nginx-gen: mkdir %s: %v", confDirPath, err)
 		return err
 	}
-	if err := os.Rename(tmp, generatedPath); err != nil {
-		warns.Warnf("nginx-rename", 30*time.Second, "WARN nginx-gen: rename %s -> %s: %v", tmp, generatedPath, err)
-		return err
+
+	confFiles, _ := serverBlocksToFiles(serverBlocks)
+
+	oldFiles := make(map[string]bool)
+	if entries, err := os.ReadDir(confDirPath); err == nil {
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".conf") {
+				oldFiles[e.Name()] = true
+			}
+		}
+	}
+
+	for filename, content := range confFiles {
+		path := filepath.Join(confDirPath, filename)
+		tmp := path + ".tmp"
+
+		if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
+			warns.Warnf("nginx-write", 30*time.Second, "WARN nginx-gen: write %s: %v", tmp, err)
+			return err
+		}
+		if err := os.Rename(tmp, path); err != nil {
+			warns.Warnf("nginx-rename", 30*time.Second, "WARN nginx-gen: rename %s -> %s: %v", tmp, path, err)
+			return err
+		}
+
+		delete(oldFiles, filename)
+		log.Printf("nginx-gen: wrote %s (%d bytes)", filename, len(content))
+	}
+
+	for oldFile := range oldFiles {
+		path := filepath.Join(confDirPath, oldFile)
+		if err := os.Remove(path); err != nil {
+			log.Printf("WARN nginx-gen: failed to remove %s: %v", path, err)
+		} else {
+			log.Printf("nginx-gen: removed stale config %s (container disappeared)", oldFile)
+		}
 	}
 
 	if dockerCli == nil {
@@ -367,7 +433,7 @@ func applyNginxConfig(ctx context.Context, generatedPath, configContent string, 
 
 	output, err := nginxExecInContainer(ctx, dockerCli, nginxContainer, []string{"nginx", "-t"})
 	if err != nil {
-		_ = os.WriteFile(generatedPath, prevBytes, 0644)
+		removeServerBlockFiles(confDirPath, confFiles)
 		warns.Warnf("nginx-test", 30*time.Second, "WARN nginx-gen: nginx -t failed (rolled back): %v\n%s", err, output)
 		return err
 	}
@@ -381,4 +447,43 @@ func applyNginxConfig(ctx context.Context, generatedPath, configContent string, 
 
 	nginxReloadsTotal.Inc()
 	return nil
+}
+
+func serverBlocksToFiles(blocks []*serverBlockConfig) (map[string]string, map[string]bool) {
+	files := make(map[string]string)
+	activeContainers := make(map[string]bool)
+
+	blockNumber := 0
+	for _, block := range blocks {
+		if block.isCustom {
+			files[fmt.Sprintf("%03d-%s.conf", blockNumber, sanitizeDNSLabel(block.domain))] = block.content
+		} else {
+			conf := &config.Config{
+				Block: &config.Block{
+					Directives: []config.IDirective{buildServerBlock(block.domain, block.upstream)},
+				},
+			}
+			style := &dumper.Style{
+				SortDirectives:    false,
+				SpaceBeforeBlocks: true,
+				StartIndent:       0,
+				Indent:            2,
+			}
+			files[fmt.Sprintf("%03d-%s.conf", blockNumber, sanitizeDNSLabel(block.domain))] = dumper.DumpConfig(conf, style)
+		}
+
+		if block.containerID != "" {
+			activeContainers[block.containerID] = true
+		}
+		blockNumber++
+	}
+
+	return files, activeContainers
+}
+
+func removeServerBlockFiles(confDir string, files map[string]string) {
+	for filename := range files {
+		path := filepath.Join(confDir, filename)
+		os.Remove(path)
+	}
 }
