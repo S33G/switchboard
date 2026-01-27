@@ -28,7 +28,7 @@ COPY ui/ ./
 RUN pnpm build
 
 
-FROM nginx:1.27-alpine
+FROM alpine:3.21
 
 # OCI labels to link package to repository
 LABEL org.opencontainers.image.source=https://github.com/S33G/switchboard
@@ -48,16 +48,13 @@ WORKDIR /app
 COPY --from=builder /out/switchboard /usr/local/bin/switchboard
 COPY --from=ui-builder /src/ui/out /app/ui
 
-RUN rm -f /etc/nginx/conf.d/default.conf
-COPY deploy/nginx/00-switchboard.conf /etc/nginx/conf.d/00-switchboard.conf
-
 COPY deploy/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENV API_PORT=8069
+ENV API_PORT=80
 ENV NGINX_CONF_GEN_ENABLED=1
 ENV DOCKER_API_VERSION=1.49
 
-EXPOSE 80 443 8069
+EXPOSE 80 6060
 
 ENTRYPOINT ["dumb-init", "--", "/entrypoint.sh"]
