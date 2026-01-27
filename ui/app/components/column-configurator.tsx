@@ -25,6 +25,7 @@ export function ColumnConfigurator({
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTempVisible(config.visibleColumns);
   }, [config.visibleColumns]);
 

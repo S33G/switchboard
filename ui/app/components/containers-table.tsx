@@ -162,7 +162,8 @@ export function ContainersTable({
             case "command":
               return row.command;
             case "status":
-              return row.status;
+              // Return created_at for sorting, not the human-readable status string
+              return row.created_at;
             case "created":
               return row.created_at;
             case "size_rw":
@@ -334,6 +335,7 @@ export function ContainersTable({
     });
   }, [visibleColumns, config]);
 
+  // @react-compiler-skip-library-memoization
   const table = useReactTable({
     data: containers,
     columns,

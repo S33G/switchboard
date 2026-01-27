@@ -15,12 +15,10 @@ type UseColumnConfigReturn = [
 ];
 
 export function useColumnConfig(): UseColumnConfigReturn {
-  const [config, setConfig] = useState<ColumnConfig>(getDefaultColumnConfig());
-
-  useEffect(() => {
+  const [config, setConfig] = useState<ColumnConfig>(() => {
     const loaded = loadColumnConfigFromStorage();
-    setConfig(loaded);
-  }, []);
+    return loaded;
+  });
 
   const saveConfig = (visibleColumns: ColumnId[]) => {
     const newConfig: ColumnConfig = {

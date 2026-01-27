@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint . --ext .ts,.tsx"
   },
   "dependencies": {
     "@leeoniya/ufuzzy": "^1.0.19",

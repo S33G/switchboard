@@ -228,7 +228,7 @@ export default function HomePage() {
             Switchboard
           </p>
           <h1 className="mt-3 text-3xl font-semibold text-white">
-            Running containers by host
+            Containers by host
           </h1>
           <p className="mt-2 text-sm text-slate-400">
             Monitor currently running containers and jump straight to the Web UI.
