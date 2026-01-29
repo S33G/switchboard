@@ -26,7 +26,7 @@ proxy_mappings:
   netbootxyz.containers.home: c3po/netbootxyz:3000
   prometheus.containers.home: c3po/prometheus:9090
   grafana.containers.home: c3po/grafana:3060
-  switchboard.containers.home: c3po/switchboard:6969
+  filebrowser.containers.home: deathstar/filebrowser:8080
 
 defaults:
   base_domain: containers.home

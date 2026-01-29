@@ -29,6 +29,7 @@ RUN apk add --no-cache \
       ca-certificates \
       dumb-init \
       docker-cli \
+      git \
       openssh-client \
       tzdata
 

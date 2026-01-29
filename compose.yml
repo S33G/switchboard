@@ -15,6 +15,7 @@ services:
       NGINX_CONTAINER_NAME: switchboard-nginx
       NGINX_GENERATED_CONF: /etc/nginx/conf.d/switchboard.generated.conf
       NGINX_USE_LINUXSERVER_CONFS: "true"
+      # LINUXSERVER_CONF_URL: https://github.com/linuxserver/reverse-proxy-confs.git
 
       # Optional knobs
       # NGINX_RELOAD_DEBOUNCE: 1500ms

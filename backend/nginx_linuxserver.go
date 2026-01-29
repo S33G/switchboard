@@ -5,16 +5,34 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
 
-const (
-	linuxserverConfBaseURL = "https://raw.githubusercontent.com/linuxserver/reverse-proxy-confs/master/"
+var (
+	linuxserverConfBaseURL = getLinuxserverConfURL()
 	linuxserverConfSuffix  = ".subdomain.conf.sample"
+	linuxserverRepoDir     = getLinuxserverRepoDir()
 )
+
+func getLinuxserverConfURL() string {
+	if envURL := os.Getenv("LINUXSERVER_CONF_URL"); envURL != "" {
+		return envURL
+	}
+	return "https://github.com/linuxserver/reverse-proxy-confs.git"
+}
+
+func getLinuxserverRepoDir() string {
+	if envDir := os.Getenv("LINUXSERVER_REPO_DIR"); envDir != "" {
+		return envDir
+	}
+	return "/tmp/linuxserver-reverse-proxy-confs"
+}
 
 type linuxserverConfigCache struct {
 	mu      sync.RWMutex
@@ -23,10 +41,26 @@ type linuxserverConfigCache struct {
 	ttl     time.Duration
 }
 
+type linuxserverGitCache struct {
+	mu      sync.RWMutex
+	files   map[string]string
+	fetched time.Time
+	ttl     time.Duration
+	syncErr error
+	repoDir string
+}
+
 var lsConfigCache = &linuxserverConfigCache{
 	configs: make(map[string]string),
 	fetched: make(map[string]time.Time),
 	ttl:     1 * time.Hour,
+}
+
+var lsGitCache = &linuxserverGitCache{
+	files:   make(map[string]string),
+	ttl:     24 * time.Hour,
+	syncErr: fmt.Errorf("not yet synced"),
+	repoDir: linuxserverRepoDir,
 }
 
 func fetchLinuxserverConfig(containerName string) (string, error) {
@@ -39,9 +73,31 @@ func fetchLinuxserverConfig(containerName string) (string, error) {
 	}
 	lsConfigCache.mu.RUnlock()
 
-	url := linuxserverConfBaseURL + containerName + linuxserverConfSuffix
-	log.Printf("nginx-gen: fetching linuxserver config for %s from %s", containerName, url)
+	log.Printf("nginx-gen: fetching linuxserver config for %s from %s", containerName, linuxserverConfBaseURL)
 
+	var config string
+	var err error
+
+	if strings.HasSuffix(linuxserverConfBaseURL, ".git") {
+		config, err = fetchLinuxserverConfigFromGit(containerName)
+	} else {
+		config, err = fetchLinuxserverConfigFromRawURL(containerName)
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	lsConfigCache.mu.Lock()
+	lsConfigCache.configs[containerName] = config
+	lsConfigCache.fetched[containerName] = time.Now()
+	lsConfigCache.mu.Unlock()
+
+	return config, nil
+}
+
+func fetchLinuxserverConfigFromRawURL(containerName string) (string, error) {
+	url := linuxserverConfBaseURL + containerName + linuxserverConfSuffix
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -62,14 +118,104 @@ func fetchLinuxserverConfig(containerName string) (string, error) {
 		return "", fmt.Errorf("read body failed: %w", err)
 	}
 
-	config := string(body)
+	return string(body), nil
+}
 
-	lsConfigCache.mu.Lock()
-	lsConfigCache.configs[containerName] = config
-	lsConfigCache.fetched[containerName] = time.Now()
-	lsConfigCache.mu.Unlock()
+func fetchLinuxserverConfigFromGit(containerName string) (string, error) {
+	if err := ensureGitRepoSynced(); err != nil {
+		return "", err
+	}
 
-	return config, nil
+	lsGitCache.mu.RLock()
+	defer lsGitCache.mu.RUnlock()
+
+	configFileName := containerName + linuxserverConfSuffix
+	if config, ok := lsGitCache.files[configFileName]; ok {
+		return config, nil
+	}
+
+	return "", fmt.Errorf("config %s not found in git repository", configFileName)
+}
+
+func ensureGitRepoSynced() error {
+	lsGitCache.mu.RLock()
+	if lsGitCache.syncErr == nil && time.Since(lsGitCache.fetched) < lsGitCache.ttl {
+		defer lsGitCache.mu.RUnlock()
+		return nil
+	}
+	lsGitCache.mu.RUnlock()
+
+	lsGitCache.mu.Lock()
+	defer lsGitCache.mu.Unlock()
+
+	if lsGitCache.syncErr == nil && time.Since(lsGitCache.fetched) < lsGitCache.ttl {
+		return nil
+	}
+
+	log.Printf("nginx-gen: syncing linuxserver configs from %s to %s", linuxserverConfBaseURL, lsGitCache.repoDir)
+
+	if _, err := os.Stat(lsGitCache.repoDir); os.IsNotExist(err) {
+		if err := gitClone(linuxserverConfBaseURL, lsGitCache.repoDir); err != nil {
+			lsGitCache.syncErr = fmt.Errorf("failed to clone repo: %w", err)
+			return lsGitCache.syncErr
+		}
+	} else {
+		if err := gitPull(lsGitCache.repoDir); err != nil {
+			lsGitCache.syncErr = fmt.Errorf("failed to pull repo: %w", err)
+			return lsGitCache.syncErr
+		}
+	}
+
+	if err := loadConfigsFromGitRepo(lsGitCache.repoDir); err != nil {
+		lsGitCache.syncErr = fmt.Errorf("failed to load configs: %w", err)
+		return lsGitCache.syncErr
+	}
+
+	lsGitCache.fetched = time.Now()
+	lsGitCache.syncErr = nil
+	log.Printf("nginx-gen: synced %d linuxserver configs", len(lsGitCache.files))
+
+	return nil
+}
+
+func gitClone(repoURL, targetDir string) error {
+	cmd := exec.Command("git", "clone", "--depth=1", repoURL, targetDir)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git clone failed: %w\n%s", err, string(output))
+	}
+	return nil
+}
+
+func gitPull(repoDir string) error {
+	cmd := exec.Command("git", "-C", repoDir, "pull", "--ff-only")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git pull failed: %w\n%s", err, string(output))
+	}
+	return nil
+}
+
+func loadConfigsFromGitRepo(repoDir string) error {
+	lsGitCache.files = make(map[string]string)
+
+	err := filepath.Walk(repoDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if strings.HasSuffix(path, linuxserverConfSuffix) {
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+
+			fileName := filepath.Base(path)
+			lsGitCache.files[fileName] = string(body)
+		}
+
+		return nil
+	})
+
+	return err
 }
 
 func replaceLinuxserverVars(template, containerName, hostAddr string, port int, scheme, domain string) (string, error) {
