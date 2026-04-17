@@ -1,4 +1,4 @@
-# 🔀 Switchboard
+# 🔀 Switchboard (WIP)
 
 > **Central nginx reverse proxy for all your Docker containers across multiple hosts**
 
